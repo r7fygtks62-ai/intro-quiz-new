@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""イントロクイズ用 早押しサーバー（標準ライブラリのみ・追加インストール不要）
+"""イントロクイズ用 早押しサーバー（部屋ごとにパスワードで分けられる版・標準ライブラリのみ）
 
-使い方:  python server.py   （Windowsは start.bat をダブルクリック）
-出題者:  http://localhost:8000/host
-回答者:  表示されるURL（または出題者画面のQRコード）をスマホで開く
+使い方:  python quiz_server.py
+  出題者:  http://localhost:8000/host     （部屋を作る）
+  回答者:  http://（このPCのアドレス）:8000/  （部屋のパスワードを入れる or QRコード）
+公開サーバー(Render等)では環境変数 HOST_KEY を設定すると、部屋を作るのに合言葉が必要になります。
 """
-import json, mimetypes, os, queue, socket, sys, threading, time
+import json, mimetypes, os, queue, random, socket, sys, threading, time, unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-# Windowsのレジストリ設定に左右されないよう拡張子を固定
 MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
         ".json": "application/json; charset=utf-8", ".mp3": "audio/mpeg", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".png": "image/png", ".webp": "image/webp", ".ico": "image/x-icon", ".m4a": "audio/mp4", ".wav": "audio/wav"}
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("PORT", "8000"))
-HOST_KEY = os.environ.get("HOST_KEY", "")   # 公開サーバーで出題者操作を守る合言葉（空なら無し）
+HOST_KEY = os.environ.get("HOST_KEY", "")   # 部屋を作るための合言葉（空なら誰でも作れる）
+MAX_ROOMS = 60
+ROOM_IDLE_SEC = 8 * 3600
+PRESENCE_TTL = 20
 
 def load(name):
     with open(os.path.join(ROOT, name), encoding="utf-8") as f:
@@ -24,101 +27,182 @@ def load(name):
 
 TEAMS = load("teams.json")
 SONGS = load("songs.json")
-TEAM_IDS = [t["id"] for t in TEAMS]
+ALL_IDS = [t["id"] for t in TEAMS]
 
-lock = threading.Lock()
-clients = []          # [{"q": Queue, "team": str|None, "role": str}]
-state = {
-    "rev": 0,
-    "run": 0,           # スタートを押した回数（音声の頭出し用）
-    "song": 0,
-    "phase": "ready",   # ready / playing / buzzed / answer
-    "order": [],        # [{"team": "A", "ms": 0}]  押した順（サーバー受信順）
-    "cur": 0,           # order の何番目が回答中か
-    "judged": False,    # 不正解が1回でも押されたら順位を確定
-    "wrong": [],        # 不正解になったチーム
-    "t0": 0.0,
-}
+lock = threading.RLock()
+rooms = {}            # 正規化した参加パスワード -> Room
+fails = {}            # IP -> [失敗した時刻...]
 
-def public_state():
-    counts = {}
-    for c in clients:
-        if c["team"]:
-            counts[c["team"]] = counts.get(c["team"], 0) + 1
-    s = {k: v for k, v in state.items() if k != "t0"}
-    s["joined"] = counts
-    return s
+def norm(s):
+    return unicodedata.normalize("NFKC", str(s or "")).strip().casefold()
 
-def broadcast():
-    state["rev"] += 1
-    data = json.dumps(public_state(), ensure_ascii=False)
-    for c in list(clients):
-        c["q"].put(data)
+class Room:
+    def __init__(self, pw, hostpw, n, cap, shuffle):
+        self.pw, self.hostpw = pw, hostpw
+        self.n, self.cap, self.shuffle = n, cap, shuffle
+        self.teams = ALL_IDS[:n]
+        self.presence = {}     # 端末ID -> {"team","t"}
+        self.clients = []      # {"q","host"}
+        self.touched = time.monotonic()
+        self.new_game()
 
-def host_action(body):
-    a = body.get("action")
+    def new_game(self):
+        idx = list(range(len(SONGS)))
+        if self.shuffle: random.shuffle(idx)
+        self.songs = idx
+        self.scores = {t: 0 for t in self.teams}
+        self.rev = getattr(self, "rev", 0)
+        self.run = getattr(self, "run", 0)
+        self.pos = 0
+        self.clear_round("ready")
+
+    def clear_round(self, phase="ready"):
+        self.phase, self.order, self.cur, self.judged, self.wrong, self.winner, self.t0 = phase, [], 0, False, [], None, 0.0
+
+    def view(self, host=False):
+        counts = {}
+        for p in self.presence.values():
+            counts[p["team"]] = counts.get(p["team"], 0) + 1
+        s = {"rev": self.rev, "run": self.run, "phase": self.phase, "order": self.order, "cur": self.cur,
+             "judged": self.judged, "wrong": self.wrong, "winner": self.winner, "pos": self.pos,
+             "total": len(self.songs), "teams": self.teams, "cap": self.cap, "joined": counts, "scores": self.scores}
+        if host and self.pos < len(self.songs): s["song"] = self.songs[self.pos]
+        return s
+
+    def broadcast(self):
+        self.rev += 1
+        self.touched = time.monotonic()
+        cache = {}
+        for c in list(self.clients):
+            k = c["host"]
+            if k not in cache: cache[k] = json.dumps(self.view(k), ensure_ascii=False)
+            c["q"].put(cache[k])
+
+    def close(self):
+        for c in list(self.clients): c["q"].put(json.dumps({"closed": True}))
+
+def get_room(pw):
+    return rooms.get(norm(pw))
+
+def host_room(pw, hostpw):
+    r = get_room(pw)
+    return r if r and norm(hostpw) == norm(r.hostpw) else None
+
+def blocked(ip):
+    now = time.time()
+    fails[ip] = [t for t in fails.get(ip, []) if now - t < 300]
+    return len(fails[ip]) >= 12
+
+def fail(ip):
+    fails.setdefault(ip, []).append(time.time())
+
+def create_room(b):
+    if HOST_KEY and str(b.get("key", "")) != HOST_KEY:
+        return {"ok": False, "reason": "key"}
+    pw, hp = str(b.get("room", "")).strip(), str(b.get("hostpw", "")).strip()
+    if len(norm(pw)) < 3 or len(norm(pw)) > 32: return {"ok": False, "reason": "room_len"}
+    if len(norm(hp)) < 3 or len(norm(hp)) > 32: return {"ok": False, "reason": "host_len"}
+    if norm(pw) == norm(hp): return {"ok": False, "reason": "same"}
+    if not SONGS: return {"ok": False, "reason": "nosongs"}
+    try:
+        n = max(2, min(8, int(b.get("n", 8)))); cap = max(1, min(30, int(b.get("cap", 1))))
+    except Exception:
+        return {"ok": False, "reason": "bad"}
     with lock:
-        ph = state["phase"]
-        if a == "start" and ph in ("ready", "playing", "buzzed", "answer"):
-            state.update(phase="playing", order=[], cur=0, judged=False, wrong=[], t0=time.monotonic(), run=state["run"] + 1)
-        elif a == "wrong" and ph == "buzzed" and state["cur"] < len(state["order"]):
-            state["wrong"].append(state["order"][state["cur"]]["team"])
-            state["judged"] = True
-            state["cur"] += 1
-        elif a in ("correct", "reveal") and ph in ("playing", "buzzed"):
-            state["phase"] = "answer"
-        elif a == "next":
-            state.update(song=(state["song"] + 1) % len(SONGS), phase="ready", order=[], cur=0, judged=False, wrong=[])
-        elif a == "prev":
-            state.update(song=(state["song"] - 1) % len(SONGS), phase="ready", order=[], cur=0, judged=False, wrong=[])
-        elif a == "goto":
-            i = int(body.get("i", 0))
-            if 0 <= i < len(SONGS):
-                state.update(song=i, phase="ready", order=[], cur=0, judged=False, wrong=[])
-        elif a == "reset":
-            state.update(phase="ready", order=[], cur=0, judged=False, wrong=[])
+        if norm(pw) in rooms: return {"ok": False, "reason": "exists"}
+        if len(rooms) >= MAX_ROOMS: return {"ok": False, "reason": "full"}
+        rooms[norm(pw)] = Room(pw, hp, n, cap, bool(b.get("shuffle", True)))
+    return {"ok": True}
+
+def host_action(r, b):
+    a, ph = b.get("action"), r.phase
+    with lock:
+        if a == "start" and ph in ("ready", "playing", "buzzed"):
+            r.clear_round("playing"); r.t0 = time.monotonic(); r.run += 1
+        elif a == "wrong" and ph == "buzzed" and r.cur < len(r.order):
+            r.wrong.append(r.order[r.cur]["team"]); r.judged = True; r.cur += 1
+        elif a == "correct" and ph == "buzzed" and r.cur < len(r.order):
+            r.winner = r.order[r.cur]["team"]; r.scores[r.winner] += 1; r.phase = "answer"
+        elif a == "reveal" and ph in ("playing", "buzzed"):
+            r.phase = "answer"
+        elif a == "reset" and ph in ("playing", "buzzed", "answer"):
+            if ph == "answer" and r.winner: r.scores[r.winner] = max(0, r.scores[r.winner] - 1)
+            r.clear_round("ready")
+        elif a == "next" and ph in ("ready", "answer"):
+            if r.pos + 1 >= len(r.songs): r.clear_round("finished")
+            else: r.pos += 1; r.clear_round("ready")
+        elif a == "prev" and ph == "ready" and r.pos > 0:
+            r.pos -= 1; r.clear_round("ready")
+        elif a == "finish" and ph != "finished":
+            r.clear_round("finished")
+        elif a == "restart":
+            r.new_game()
+        elif a == "adjust" and b.get("team") in r.teams:
+            r.scores[b["team"]] = max(0, r.scores[b["team"]] + (1 if int(b.get("delta", 0)) > 0 else -1))
+        elif a == "close":
+            r.close(); rooms.pop(norm(r.pw), None); return True
         else:
             return False
-        broadcast()
+        r.broadcast()
     return True
 
-def buzz(team):
-    if team not in TEAM_IDS:
-        return {"ok": False}
+def ping(r, pid, team):
+    if team not in r.teams or not pid: return {"ok": False, "reason": "team"}
+    with lock:
+        old = r.presence.get(pid)
+        if not old or old["team"] != team:
+            n = sum(1 for p in r.presence.values() if p["team"] == team)
+            if n >= r.cap: return {"ok": False, "reason": "full"}
+        r.presence[pid] = {"team": team, "t": time.monotonic()}
+        if not old or old["team"] != team: r.broadcast()
+    return {"ok": True}
+
+def leave(r, pid):
+    with lock:
+        if r.presence.pop(pid, None) is not None: r.broadcast()
+
+def buzz(r, team):
+    if team not in r.teams: return {"ok": False}
     with lock:
         now = time.monotonic()
-        ph = state["phase"]
-        if ph == "playing":
-            state["phase"] = "buzzed"
-        elif not (ph == "buzzed" and not state["judged"]):
-            return {"ok": False, "reason": "closed"}
-        if any(o["team"] == team for o in state["order"]):
-            return {"ok": True, "dup": True}
-        if not state["order"]:
-            state["t0"] = now
-        state["order"].append({"team": team, "ms": int((now - state["t0"]) * 1000)})
-        broadcast()
-        return {"ok": True, "rank": len(state["order"])}
+        if r.phase == "playing": r.phase = "buzzed"
+        elif not (r.phase == "buzzed" and not r.judged): return {"ok": False, "reason": "closed"}
+        if any(o["team"] == team for o in r.order): return {"ok": True, "dup": True}
+        if not r.order: r.t0 = now
+        r.order.append({"team": team, "ms": int((now - r.t0) * 1000)})
+        r.broadcast()
+        return {"ok": True, "rank": len(r.order)}
+
+def reaper():
+    while True:
+        time.sleep(3)
+        with lock:
+            now = time.monotonic()
+            for k, r in list(rooms.items()):
+                dead = [i for i, p in r.presence.items() if now - p["t"] > PRESENCE_TTL]
+                for i in dead: del r.presence[i]
+                if dead: r.broadcast()
+                if now - r.touched > ROOM_IDLE_SEC and not r.clients:
+                    del rooms[k]
 
 def lan_ips():
     ips = []
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("10.255.255.255", 1))
-        ips.append(s.getsockname()[0]); s.close()
-    except Exception:
-        pass
+        s.connect(("10.255.255.255", 1)); ips.append(s.getsockname()[0]); s.close()
+    except Exception: pass
     try:
         for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
-            if not ip.startswith("127.") and ip not in ips:
-                ips.append(ip)
-    except Exception:
-        pass
+            if not ip.startswith("127.") and ip not in ips: ips.append(ip)
+    except Exception: pass
     return ips
 
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, *a): pass
+
+    def ip(self):
+        return (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
 
     def send_json(self, obj, code=200, cors=False):
         b = json.dumps(obj, ensure_ascii=False).encode()
@@ -131,52 +215,75 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
-        try:
-            body = json.loads(self.rfile.read(n) or b"{}")
-        except Exception:
-            body = {}
+        try: b = json.loads(self.rfile.read(n) or b"{}")
+        except Exception: b = {}
         path = urlparse(self.path).path
-        if path == "/api/buzz":
-            self.send_json(buzz(str(body.get("team", ""))))
-        elif path == "/api/host":
-            if HOST_KEY and self.headers.get("X-Host-Key", "") != HOST_KEY:
-                return self.send_json({"ok": False, "reason": "key"}, 403)
-            self.send_json({"ok": host_action(body)})
-        else:
-            self.send_json({"ok": False}, 404)
+        room = b.get("room", "")
+        if path == "/api/create":
+            if blocked(self.ip()): return self.send_json({"ok": False, "reason": "wait"}, 429)
+            res = create_room(b)
+            if res.get("reason") == "key": fail(self.ip())
+            return self.send_json(res)
+        if path == "/api/host_login":
+            if blocked(self.ip()): return self.send_json({"ok": False, "reason": "wait"}, 429)
+            with lock: r = host_room(room, b.get("hostpw", ""))
+            if not r: fail(self.ip())
+            return self.send_json({"ok": bool(r), "n": r.n if r else 0})
+        if path == "/api/host":
+            with lock:
+                r = host_room(room, b.get("hostpw", ""))
+                if not r: return self.send_json({"ok": False, "reason": "auth"}, 403)
+                return self.send_json({"ok": host_action(r, b)})
+        with lock: r = get_room(room)
+        if not r: return self.send_json({"ok": False, "reason": "noroom"})
+        if path == "/api/buzz": return self.send_json(buzz(r, str(b.get("team", ""))))
+        if path == "/api/ping": return self.send_json(ping(r, str(b.get("id", "")), str(b.get("team", ""))))
+        if path == "/api/leave":
+            leave(r, str(b.get("id", ""))); return self.send_json({"ok": True})
+        self.send_json({"ok": False}, 404)
 
     def do_GET(self):
-        u = urlparse(self.path); path = u.path
+        u = urlparse(self.path); path = u.path; q = parse_qs(u.query)
+        g = lambda k: (q.get(k) or [""])[0]
         if path == "/api/config":
             port = self.server.server_address[1]
-            return self.send_json({"teams": TEAMS, "songs": SONGS, "needKey": bool(HOST_KEY),
+            return self.send_json({"teams": TEAMS, "needKey": bool(HOST_KEY),
                                    "urls": [f"http://{ip}:{port}/" for ip in lan_ips()]}, cors=True)
-        if path == "/api/state":
-            with lock: return self.send_json(public_state())
+        if path == "/api/room":     # 参加者がパスワードを入れたときの確認
+            with lock: r = get_room(g("room"))
+            return self.send_json({"ok": bool(r)})
+        if path == "/api/songs":    # 曲名などは出題者(または作成キー)にだけ見せる
+            with lock: okh = host_room(g("room"), g("hostpw")) is not None
+            okk = (g("key") == HOST_KEY) if HOST_KEY else (g("admin") == "1")
+            if not okh and not okk:
+                return self.send_json({"ok": False}, 403, cors=True)
+            return self.send_json({"ok": True, "songs": SONGS}, cors=True)
         if path == "/api/events":
-            return self.events(parse_qs(u.query))
+            return self.events(g("room"), g("hostpw"))
         if path in ("/", "/play"): path = "/play.html"
         if path == "/host": path = "/host.html"
         self.static(path)
 
-    def events(self, q):
-        team = (q.get("team") or [None])[0]
-        c = {"q": queue.Queue(), "team": team if team in TEAM_IDS else None}
+    def events(self, room, hostpw):
+        with lock:
+            r = get_room(room)
+            is_host = bool(r) and norm(hostpw) == norm(r.hostpw)
+            if not r: return self.send_json({"closed": True}, 404)
+            c = {"q": queue.Queue(), "host": is_host}
+            r.clients.append(c)
+            c["q"].put(json.dumps(r.view(is_host), ensure_ascii=False))
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("Connection", "close")
         self.end_headers()
-        with lock:
-            clients.append(c)
-            c["q"].put(json.dumps(public_state(), ensure_ascii=False))
-            if c["team"]: broadcast()
         try:
             while True:
                 try:
                     data = c["q"].get(timeout=15)
                     self.wfile.write(f"data: {data}\n\n".encode())
+                    if '"closed"' in data: break
                 except queue.Empty:
                     self.wfile.write(b": ping\n\n")
                 self.wfile.flush()
@@ -184,8 +291,7 @@ class H(BaseHTTPRequestHandler):
             pass
         finally:
             with lock:
-                if c in clients: clients.remove(c)
-                broadcast()
+                if c in r.clients: r.clients.remove(c)
             self.close_connection = True
 
     def find_static(self, path):
@@ -204,6 +310,7 @@ class H(BaseHTTPRequestHandler):
 
     def static(self, path):
         fp = self.find_static(path)
+        if fp and os.path.basename(fp) in ("quiz_server.py", "songs.json"): fp = None
         if fp:
             ctype = MIME.get(os.path.splitext(fp)[1].lower()) or mimetypes.guess_type(fp)[0] or "application/octet-stream"
             size = os.path.getsize(fp)
@@ -227,25 +334,21 @@ class H(BaseHTTPRequestHandler):
 class S(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
-
     def handle_error(self, request, client_address):
-        # スマホが画面を閉じた・切り替えたときの切断エラーは無視する
-        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError, OSError)):
-            return
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError, OSError)): return
         super().handle_error(request, client_address)
 
 if __name__ == "__main__":
     try: sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception: pass
+    threading.Thread(target=reaper, daemon=True).start()
     srv = S(("0.0.0.0", PORT), H)
     print("=" * 56)
     print(" イントロクイズ 早押しサーバー 起動中")
-    print(f"  出題者(このPC):  http://localhost:{PORT}/host")
+    print(f"  出題者(このPC):  http://localhost:{PORT}/host   ← 部屋を作る")
     for ip in lan_ips():
         print(f"  回答者(スマホ):  http://{ip}:{PORT}/")
     print(" 終了は Ctrl+C")
     print("=" * 56)
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        pass
+    try: srv.serve_forever()
+    except KeyboardInterrupt: pass

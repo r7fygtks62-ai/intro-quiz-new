@@ -15,7 +15,10 @@ button{font:inherit;color:inherit;border:0}
 h1{font-size:22px;text-align:center;margin:28px 0 6px}
 p.sub{text-align:center;color:var(--mute);margin:0 0 20px}
 #pick{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;padding-bottom:24px;overflow:auto}
-#pick button{padding:0;border-radius:20px;overflow:hidden;aspect-ratio:1;background:#000}
+#pick button{padding:0;border-radius:20px;overflow:hidden;aspect-ratio:1;background:#000;position:relative}
+#pick button .bd{position:absolute;left:6px;bottom:6px;background:#000b;color:#fff;border-radius:999px;padding:2px 9px;font-size:12px}
+#pick button.full{opacity:.35}
+#pick button.full .bd{background:var(--ng,#ff5d6c)}
 #pick img{width:100%;height:100%;display:block}
 #play{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:14px 0 22px}
 .top{display:flex;align-items:center;gap:12px;width:100%}
@@ -32,14 +35,34 @@ p.sub{text-align:center;color:var(--mute);margin:0 0 20px}
 @keyframes pulse{50%{box-shadow:inset 0 -14px 0 #0004,0 0 0 18px #ffffff10,0 0 80px var(--team)}}
 .note{min-height:28px;color:var(--mute);font-size:16px;text-align:center}
 .note.hot{color:var(--accent);font-weight:700;font-size:22px}
+
+.entry{display:flex;flex-direction:column;gap:14px;margin-top:26px}
+.entry input{font:inherit;font-size:24px;text-align:center;padding:16px;border-radius:16px;border:2px solid #ffffff26;background:#0007;color:var(--ink);width:100%;user-select:text;-webkit-user-select:text}
+.entry input:focus{outline:none;border-color:var(--accent)}
+.entry button{background:var(--accent);color:#1b1b2e;font-size:22px;font-weight:700;padding:16px;border-radius:16px}
+.err{color:#ff5d6c;text-align:center;min-height:24px;margin:0}
+.linkbtn{background:none;color:var(--mute);font-size:13px;text-decoration:underline;margin-top:8px;padding:6px}
+.big{font-size:56px;margin:0}
+.fin{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}
+.fin .r{font-size:72px;font-weight:700;color:var(--accent)}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){#btn.open{animation:none}}
 </style>
 </head>
 <body>
-<section id="pickWrap">
+<section id="entryWrap" hidden>
+  <h1>イントロクイズ</h1><p class="sub">部屋のパスワードを入力してください</p>
+  <form class="entry" id="fEntry" autocomplete="off">
+    <input type="text" id="roomIn" placeholder="パスワード" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <p class="err" id="eEntry"></p>
+    <button type="submit">入室</button>
+  </form>
+</section>
+<section id="pickWrap" hidden>
   <h1>チームを選んでください</h1><p class="sub">自分のチームのアイコンをタップ</p>
+  <p class="err" id="ePick"></p>
   <div id="pick"></div>
+  <div style="text-align:center"><button class="linkbtn" id="exitRoom">別の部屋に入る</button></div>
 </section>
 <section id="play" hidden>
   <div class="top"><img id="myicon" alt=""><div class="st"><span id="myname"></span><small id="conn">接続中…</small></div><button id="change">チーム変更</button></div>
@@ -48,33 +71,97 @@ p.sub{text-align:center;color:var(--mute);margin:0 0 20px}
 </section>
 <script>
 const $=id=>document.getElementById(id);
-let cfg,S=null,me=null,es=null,pressed=false,lastRun=-1;
-function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v);}catch(e){return null}}
+let cfg,S=null,me=null,room='',es=null,pressed=false,lastRun=-1,mode='entry';
+const myId=Math.random().toString(36).slice(2)+Date.now().toString(36);
+function store(k,v){try{if(v===undefined)return localStorage.getItem(k);if(v===null)localStorage.removeItem(k);else localStorage.setItem(k,v);}catch(e){return null}}
+const send=(path,body)=>{try{return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({room,...body}),keepalive:true}).then(r=>r.json()).catch(()=>null);}catch(e){return Promise.resolve(null)}};
+const teamBy=id=>cfg.teams.find(t=>t.id===id);
+function show(m){mode=m;$('entryWrap').hidden=m!=='entry';$('pickWrap').hidden=m!=='pick';$('play').hidden=m!=='play';}
+
+async function pingNow(){
+  if(!me||document.hidden||!room)return;
+  const r=await send('/api/ping',{id:myId,team:me.id});
+  if(r&&!r.ok){
+    if(r.reason==='noroom')return backToEntry('この部屋は終了しました');
+    if(r.reason==='full'){me=null;store('team:'+room,null);show('pick');$('ePick').textContent='そのチームは満員になりました。別のチームを選んでください';}
+  }
+}
+setInterval(pingNow,7000);
+addEventListener('pagehide',()=>{if(room)send('/api/leave',{id:myId});});
+document.addEventListener('visibilitychange',()=>{if(!room)return;if(document.hidden)send('/api/leave',{id:myId});else pingNow();});
 
 async function init(){
   cfg=await (await fetch('/api/config')).json();
-  $('pick').innerHTML=cfg.teams.map(t=>`<button data-t="${t.id}" aria-label="${t.name}"><img src="${t.icon}" alt="${t.name}"></button>`).join('');
-  $('pick').onclick=e=>{const b=e.target.closest('button');if(b)choose(b.dataset.t);};
-  const saved=store('team'); if(saved&&cfg.teams.some(t=>t.id===saved))choose(saved);
+  const q=new URLSearchParams(location.search).get('r');
+  const cand=q||store('room')||'';
+  if(cand){const ok=await tryRoom(cand);if(ok)return;if(q)$('eEntry').textContent='その部屋が見つかりません。パスワードを確認してください';}
+  $('roomIn').value=q||'';show('entry');
 }
-function choose(id){
-  me=cfg.teams.find(t=>t.id===id); store('team',id);
-  document.documentElement.style.setProperty('--team',me.color);
-  $('pickWrap').hidden=true; $('play').hidden=false;
-  $('myicon').src=me.icon; $('myname').textContent=me.name;
+async function tryRoom(pw){
+  let ok=false;
+  try{ok=(await (await fetch('/api/room?room='+encodeURIComponent(pw))).json()).ok;}catch(e){}
+  if(!ok)return false;
+  room=pw;store('room',pw);openEvents();show('pick');return true;
+}
+function backToEntry(msg){
+  if(es)es.close();room='';me=null;S=null;store('room',null);show('entry');$('eEntry').textContent=msg||'';
+  history.replaceState(null,'',location.pathname);
+}
+$('fEntry').onsubmit=async e=>{
+  e.preventDefault();$('eEntry').textContent='';
+  const v=$('roomIn').value.trim();if(!v)return;
+  if(!(await tryRoom(v)))$('eEntry').textContent='その部屋が見つかりません。パスワードを確認してください';
+};
+$('exitRoom').onclick=()=>backToEntry('');
+
+function openEvents(){
   if(es)es.close();
-  es=new EventSource('/api/events?team='+id);
-  es.onopen=()=>$('conn').textContent='接続OK';
-  es.onerror=()=>$('conn').textContent='接続しなおしています…';
-  es.onmessage=e=>{S=JSON.parse(e.data);render();};
+  es=new EventSource('/api/events?room='+encodeURIComponent(room));
+  es.onopen=()=>{$('conn').textContent='接続OK';};
+  es.onerror=()=>{$('conn').textContent='接続しなおしています…';};
+  es.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if(d.closed)return backToEntry('この部屋は終了しました');
+    const first=!S;S=d;
+    if(first){const sv=store('team:'+room);if(sv&&S.teams.includes(sv)){choose(sv);return;}}
+    if(mode==='pick')renderPick();
+    if(mode==='play')render();
+  };
+}
+function renderPick(){
+  $('pick').innerHTML=S.teams.map(id=>{const t=teamBy(id),j=(S.joined||{})[id]||0,full=j>=S.cap;
+    return `<button data-t="${id}" class="${full?'full':''}" aria-label="${t.name}"><img src="${t.icon}" alt="${t.name}"><span class="bd">${full?'満員':j+'/'+S.cap+'台'}</span></button>`;}).join('');
+}
+$('pick').onclick=e=>{const b=e.target.closest('button');if(b&&!b.classList.contains('full'))choose(b.dataset.t);};
+async function choose(id){
+  const t=teamBy(id);
+  const r=await send('/api/ping',{id:myId,team:id});
+  if(r&&!r.ok){
+    if(r.reason==='noroom')return backToEntry('この部屋は終了しました');
+    show('pick');renderPick();$('ePick').textContent='そのチームは満員です。別のチームを選んでください';store('team:'+room,null);return;
+  }
+  me=t;store('team:'+room,id);$('ePick').textContent='';
+  document.documentElement.style.setProperty('--team',t.color);
+  $('myicon').src=t.icon;
+  show('play');render();
   try{navigator.wakeLock&&navigator.wakeLock.request('screen').catch(()=>{});}catch(e){}
 }
 function render(){
+  if(!me||!S)return;
+  $('myname').textContent=`${me.name}　★${(S.scores||{})[me.id]||0}`;
   if(S.run!==lastRun){pressed=false;lastRun=S.run;}
-  const btn=$('btn'),note=$('note'); btn.className=''; note.className='note';
+  const btn=$('btn'),note=$('note');btn.className='';note.className='note';
   const idx=S.order.findIndex(o=>o.team===me.id);
   const iAmCur=S.phase==='buzzed'&&S.order[S.cur]&&S.order[S.cur].team===me.id;
   const wrong=S.wrong.includes(me.id);
+  if(S.phase==='finished'){
+    const mine=S.scores[me.id]||0,rk=1+S.teams.filter(id=>(S.scores[id]||0)>mine).length;
+    btn.disabled=true;btn.className='';btn.style.display='none';
+    let f=$('finBox');if(!f){f=document.createElement('div');f.id='finBox';f.className='fin';$('play').insertBefore(f,btn);}
+    f.hidden=false;f.innerHTML=`<div>結果発表</div><div class="r">${rk}位</div><div>${mine} 問正解</div>`;
+    note.textContent='おつかれさまでした！';return;
+  }
+  btn.style.display='';const f=$('finBox');if(f)f.hidden=true;
   if(S.phase==='ready'){btn.disabled=true;btn.textContent='待機中';note.textContent='出題者のスタートを待っています';}
   else if(S.phase==='playing'){btn.disabled=false;btn.className='open';btn.innerHTML='PUSH';note.textContent='わかったら押す！';}
   else if(S.phase==='buzzed'){
@@ -83,18 +170,22 @@ function render(){
       btn.innerHTML=wrong?`×<small>不正解</small>`:`${idx+1}位<small>${iAmCur?'回答どうぞ！':'押しました'}</small>`;
       if(iAmCur){note.textContent='あなたのチームが回答中！';note.classList.add('hot');}
       else if(wrong)note.textContent='次のチームの回答です';
-      else{const w=S.order[S.cur];note.textContent=w?'回答中: '+cfg.teams.find(t=>t.id===w.team).name:'';}
+      else{const w=S.order[S.cur];note.textContent=w?'回答中: '+teamBy(w.team).name:'';}
     }else if(!S.judged){btn.disabled=false;btn.className='open';btn.innerHTML='PUSH';note.textContent='まだ押せます';}
     else{btn.disabled=true;btn.textContent='受付終了';note.textContent='';}
-  }else{btn.disabled=true;btn.textContent='正解発表';note.textContent='';}
+  }else{
+    btn.disabled=true;
+    if(S.winner===me.id){btn.className='me';btn.innerHTML='正解！<small>+1点</small>';note.textContent='おめでとう！';note.classList.add('hot');}
+    else{btn.textContent='正解発表';note.textContent=S.winner?teamBy(S.winner).name+'が正解':'';}
+  }
 }
 $('btn').addEventListener('pointerdown',async e=>{
-  if($('btn').disabled||pressed)return; pressed=true;
+  if($('btn').disabled||pressed)return;pressed=true;
   if(navigator.vibrate)navigator.vibrate(40);
   $('btn').disabled=true;
-  try{await fetch('/api/buzz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({team:me.id})});}catch(err){pressed=false;$('btn').disabled=false;}
+  try{await fetch('/api/buzz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({room,team:me.id})});}catch(err){pressed=false;$('btn').disabled=false;}
 });
-$('change').onclick=()=>{if(es)es.close();me=null;$('play').hidden=true;$('pickWrap').hidden=false;};
+$('change').onclick=()=>{send('/api/leave',{id:myId});me=null;store('team:'+room,null);show('pick');renderPick();};
 init();
 </script>
 </body>

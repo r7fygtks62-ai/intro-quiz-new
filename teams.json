@@ -40,5 +40,11 @@
     "name": "Gチーム",
     "color": "#ffa520",
     "icon": "G.png"
+  },
+  {
+    "id": "H",
+    "name": "Hチーム",
+    "color": "#a4dc6c",
+    "icon": "H.png"
   }
 ]
