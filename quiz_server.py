@@ -6,7 +6,7 @@
   回答者:  http://（このPCのアドレス）:8000/  （部屋のパスワードを入れる or QRコード）
 公開サーバー(Render等)では環境変数 HOST_KEY を設定すると、部屋を作るのに合言葉が必要になります。
 """
-import json, mimetypes, os, queue, random, socket, sys, threading, time, unicodedata
+import json, mimetypes, os, queue, random, secrets, socket, sys, threading, time, unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -26,11 +26,36 @@ def load(name):
         return json.load(f)
 
 TEAMS = load("teams.json")
-SONGS = load("songs.json")
+try: SONGS = load("songs.json")
+except Exception: SONGS = []
+MEDIA = {}            # 「.song」ファイルから読み込んだ音声・画像（メモリ上）
+
+def load_packed():
+    import base64, glob
+    pats = [os.path.join(ROOT, "*.song"), os.path.join(ROOT, "public", "*.song"), os.path.join(ROOT, "songs", "*.song")]
+    seen = set()
+    for fp in sorted(sum((glob.glob(p) for p in pats), [])):
+        try:
+            with open(fp, encoding="utf-8") as f: d = json.load(f)
+            key = (d["title"], d.get("artist", ""))
+            if key in seen: continue
+            seen.add(key)
+            n = len(SONGS)
+            base = f"/m/{n}/"
+            MEDIA[base + "intro.mp3"] = (base64.b64decode(d["intro"]), "audio/mpeg")
+            MEDIA[base + "chorus.mp3"] = (base64.b64decode(d["chorus"]), "audio/mpeg")
+            MEDIA[base + "cover.jpg"] = (base64.b64decode(d["cover"]), "image/jpeg")
+            SONGS.append({"title": d["title"], "artist": d.get("artist", ""), "intro": base + "intro.mp3",
+                          "chorus": base + "chorus.mp3", "cover": base + "cover.jpg"})
+        except Exception as e:
+            print("曲ファイルを読めませんでした:", fp, e)
+load_packed()
 ALL_IDS = [t["id"] for t in TEAMS]
 
 lock = threading.RLock()
-rooms = {}            # 正規化した参加パスワード -> Room
+rooms = {}            # 部屋番号 -> Room
+START_DELAY = 1.2     # 「デデン」の間、押せない秒数
+PENALTY = 0.5         # お手付き（不正解）の減点
 fails = {}            # IP -> [失敗した時刻...]
 
 def norm(s):
@@ -50,7 +75,8 @@ class Room:
         idx = list(range(len(SONGS)))
         if self.shuffle: random.shuffle(idx)
         self.songs = idx
-        self.scores = {t: 0 for t in self.teams}
+        self.rounds = {}                       # 何問目 -> {"events":[{team,type,d}], "done":bool}
+        self.adj = {t: 0.0 for t in self.teams} # 出題者による手動の得点修正
         self.rev = getattr(self, "rev", 0)
         self.run = getattr(self, "run", 0)
         self.pos = 0
@@ -58,6 +84,24 @@ class Room:
 
     def clear_round(self, phase="ready"):
         self.phase, self.order, self.cur, self.judged, self.wrong, self.winner, self.t0 = phase, [], 0, False, [], None, 0.0
+        self.t_open = 0.0
+
+    def scores(self):
+        sc = {t: self.adj[t] for t in self.teams}
+        for rd in self.rounds.values():
+            for e in rd["events"]: sc[e["team"]] += e["d"]
+        return sc
+
+    def results(self):
+        sc = self.scores(); st = {t: {"correct": 0, "wrong": 0} for t in self.teams}
+        hist = []
+        for pos in sorted(self.rounds):
+            rd = self.rounds[pos]
+            for e in rd["events"]: st[e["team"]][e["type"]] += 1
+            sg = SONGS[self.songs[pos]] if pos < len(self.songs) else {"title": "", "artist": ""}
+            hist.append({"no": pos + 1, "title": sg["title"], "artist": sg["artist"], "events": rd["events"], "skipped": rd.get("skipped", False)})
+        return {"teams": self.teams, "scores": sc, "stats": st, "history": hist, "adj": self.adj,
+                "phase": self.phase, "pos": self.pos, "total": len(self.songs), "room": self.pw}
 
     def view(self, host=False):
         counts = {}
@@ -65,7 +109,8 @@ class Room:
             counts[p["team"]] = counts.get(p["team"], 0) + 1
         s = {"rev": self.rev, "run": self.run, "phase": self.phase, "order": self.order, "cur": self.cur,
              "judged": self.judged, "wrong": self.wrong, "winner": self.winner, "pos": self.pos,
-             "total": len(self.songs), "teams": self.teams, "cap": self.cap, "joined": counts, "scores": self.scores}
+             "total": len(self.songs), "teams": self.teams, "cap": self.cap, "joined": counts,
+             "delay": int(START_DELAY * 1000)}
         if host and self.pos < len(self.songs): s["song"] = self.songs[self.pos]
         return s
 
@@ -99,36 +144,44 @@ def fail(ip):
 def create_room(b):
     if HOST_KEY and str(b.get("key", "")) != HOST_KEY:
         return {"ok": False, "reason": "key"}
-    pw, hp = str(b.get("room", "")).strip(), str(b.get("hostpw", "")).strip()
-    if len(norm(pw)) < 3 or len(norm(pw)) > 32: return {"ok": False, "reason": "room_len"}
-    if len(norm(hp)) < 3 or len(norm(hp)) > 32: return {"ok": False, "reason": "host_len"}
-    if norm(pw) == norm(hp): return {"ok": False, "reason": "same"}
     if not SONGS: return {"ok": False, "reason": "nosongs"}
     try:
         n = max(2, min(8, int(b.get("n", 8)))); cap = max(1, min(30, int(b.get("cap", 1))))
     except Exception:
         return {"ok": False, "reason": "bad"}
     with lock:
-        if norm(pw) in rooms: return {"ok": False, "reason": "exists"}
         if len(rooms) >= MAX_ROOMS: return {"ok": False, "reason": "full"}
-        rooms[norm(pw)] = Room(pw, hp, n, cap, bool(b.get("shuffle", True)))
-    return {"ok": True}
+        for _ in range(200):
+            pw = str(random.randint(1000, 9999))
+            if pw not in rooms: break
+        else:
+            return {"ok": False, "reason": "full"}
+        hp = secrets.token_urlsafe(12)
+        rooms[pw] = Room(pw, hp, n, cap, bool(b.get("shuffle", True)))
+    return {"ok": True, "room": pw, "hostpw": hp}
 
 def host_action(r, b):
     a, ph = b.get("action"), r.phase
     with lock:
+        if "from" in b and b["from"] != r.pos: return False
+        rd = r.rounds.get(r.pos)
         if a == "start" and ph in ("ready", "playing", "buzzed"):
-            r.clear_round("playing"); r.t0 = time.monotonic(); r.run += 1
-        elif a == "wrong" and ph == "buzzed" and r.cur < len(r.order):
-            r.wrong.append(r.order[r.cur]["team"]); r.judged = True; r.cur += 1
-        elif a == "correct" and ph == "buzzed" and r.cur < len(r.order):
-            r.winner = r.order[r.cur]["team"]; r.scores[r.winner] += 1; r.phase = "answer"
+            r.clear_round("playing"); r.t_open = time.monotonic() + START_DELAY; r.t0 = r.t_open; r.run += 1
+            r.rounds[r.pos] = {"events": [], "done": False}
+        elif a == "wrong" and ph == "buzzed" and r.cur < len(r.order) and rd:
+            t = r.order[r.cur]["team"]
+            rd["events"].append({"team": t, "type": "wrong", "d": -PENALTY})
+            r.wrong.append(t); r.judged = True; r.cur += 1
+        elif a == "correct" and ph == "buzzed" and r.cur < len(r.order) and rd:
+            r.winner = r.order[r.cur]["team"]
+            rd["events"].append({"team": r.winner, "type": "correct", "d": 1}); rd["done"] = True; r.phase = "answer"
         elif a == "reveal" and ph in ("playing", "buzzed"):
+            if rd: rd["done"] = True
             r.phase = "answer"
         elif a == "reset" and ph in ("playing", "buzzed", "answer"):
-            if ph == "answer" and r.winner: r.scores[r.winner] = max(0, r.scores[r.winner] - 1)
-            r.clear_round("ready")
+            r.rounds.pop(r.pos, None); r.clear_round("ready")
         elif a == "next" and ph in ("ready", "answer"):
+            if ph == "ready": r.rounds[r.pos] = {"events": [], "done": True, "skipped": True}
             if r.pos + 1 >= len(r.songs): r.clear_round("finished")
             else: r.pos += 1; r.clear_round("ready")
         elif a == "prev" and ph == "ready" and r.pos > 0:
@@ -138,7 +191,7 @@ def host_action(r, b):
         elif a == "restart":
             r.new_game()
         elif a == "adjust" and b.get("team") in r.teams:
-            r.scores[b["team"]] = max(0, r.scores[b["team"]] + (1 if int(b.get("delta", 0)) > 0 else -1))
+            r.adj[b["team"]] += 0.5 if int(b.get("delta", 0)) > 0 else -0.5
         elif a == "close":
             r.close(); rooms.pop(norm(r.pw), None); return True
         else:
@@ -165,6 +218,7 @@ def buzz(r, team):
     if team not in r.teams: return {"ok": False}
     with lock:
         now = time.monotonic()
+        if r.phase == "playing" and now < r.t_open: return {"ok": False, "reason": "early"}
         if r.phase == "playing": r.phase = "buzzed"
         elif not (r.phase == "buzzed" and not r.judged): return {"ok": False, "reason": "closed"}
         if any(o["team"] == team for o in r.order): return {"ok": True, "dup": True}
@@ -258,10 +312,17 @@ class H(BaseHTTPRequestHandler):
             if not okh and not okk:
                 return self.send_json({"ok": False}, 403, cors=True)
             return self.send_json({"ok": True, "songs": SONGS}, cors=True)
+        if path == "/api/results":
+            with lock:
+                r = host_room(g("room"), g("hostpw"))
+                if not r: return self.send_json({"ok": False}, 403)
+                return self.send_json({"ok": True, **r.results()})
         if path == "/api/events":
             return self.events(g("room"), g("hostpw"))
-        if path in ("/", "/play"): path = "/play.html"
+        if path == "/": path = "/index.html"
+        if path == "/play": path = "/play.html"
         if path == "/host": path = "/host.html"
+        if path == "/results": path = "/results.html"
         self.static(path)
 
     def events(self, room, hostpw):
@@ -308,9 +369,24 @@ class H(BaseHTTPRequestHandler):
                 return fp
         return None
 
+    def serve_bytes(self, data, ctype):
+        size = len(data); rng = self.headers.get("Range"); start, end, code = 0, size - 1, 200
+        if rng and rng.startswith("bytes="):
+            a, _, b = rng[6:].partition("-")
+            start = int(a or 0); end = int(b) if b else size - 1; code = 206
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        if code == 206: self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers(); self.wfile.write(data[start:end + 1])
+
     def static(self, path):
+        if path in MEDIA:
+            return self.serve_bytes(*MEDIA[path])
         fp = self.find_static(path)
-        if fp and os.path.basename(fp) in ("quiz_server.py", "songs.json"): fp = None
+        if fp and (os.path.basename(fp) in ("quiz_server.py", "songs.json") or fp.endswith(".song")): fp = None
         if fp:
             ctype = MIME.get(os.path.splitext(fp)[1].lower()) or mimetypes.guess_type(fp)[0] or "application/octet-stream"
             size = os.path.getsize(fp)

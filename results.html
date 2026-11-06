@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>イントロクイズ 結果（出題者用）</title>
+<style>
+:root{--bg:#0d1130;--bg2:#161c47;--ink:#fdfde8;--mute:#8d93c4;--accent:#ffd23f;--ok:#2fd27a;--ng:#ff5d6c;
+  --display:"Hiragino Maru Gothic ProN","Yu Gothic UI","Meiryo","Noto Sans JP",system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--display);padding:20px max(16px,4vw) 60px}
+button{font:inherit;color:inherit;border:0;cursor:pointer}
+.wrap{max-width:860px;margin:0 auto}
+h1{font-size:24px;margin:6px 0 2px}
+h2{font-size:18px;margin:30px 0 10px;color:var(--accent)}
+.sub{color:var(--mute);font-size:14px}
+.warn{background:#ff5d6c22;border:1px solid #ff5d6c66;border-radius:12px;padding:10px 14px;font-size:14px;margin:14px 0}
+.row{display:flex;align-items:center;gap:12px;background:#ffffff10;border-radius:16px;padding:8px 14px 8px 8px;margin-bottom:8px}
+.row img{width:46px;height:46px;border-radius:12px}
+.row .n{width:46px;text-align:center;font-weight:700;color:var(--mute);font-size:20px}
+.row.first{background:var(--accent);color:#1b1b2e}.row.first .n{color:#1b1b2e}
+.row .nm{flex:1;font-size:18px}
+.row .nm small{display:block;font-size:12px;opacity:.7}
+.row .pt{font-size:28px;font-weight:700;min-width:70px;text-align:right}
+.adj{display:flex;gap:4px}
+.adj button{background:#0003;border-radius:8px;width:34px;height:30px;font-size:15px}
+.row:not(.first) .adj button{background:#ffffff22}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #ffffff18;vertical-align:top}
+th{color:var(--mute);font-weight:400;font-size:13px}
+.c{color:var(--ok)}.w{color:var(--ng)}
+.dl{background:var(--accent);color:#1b1b2e;font-weight:700;padding:12px 20px;border-radius:12px;font-size:16px}
+.top{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>結果（出題者用）</h1>
+  <div class="sub" id="meta">読み込み中…</div>
+  <div class="warn">このページは参加者に見せないでください。会場の大画面には映らない、出題者専用のページです。</div>
+  <div class="top"><button class="dl" id="csv">CSVで保存する</button><span class="sub" id="upd"></span></div>
+  <h2>得点</h2>
+  <div id="board"></div>
+  <p class="sub">正解 +1点 ／ お手付き（不正解） −0.5点。「−」「＋」で 0.5点ずつ手動で直せます。</p>
+  <h2>1問ごとの記録</h2>
+  <table><thead><tr><th>#</th><th>曲</th><th>結果</th></tr></thead><tbody id="hist"></tbody></table>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ls=k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}};
+let R=null,teamBy={},D=null;
+const p=new URLSearchParams(location.search);
+if(p.get('r')&&p.get('k'))R={room:p.get('r'),hostpw:p.get('k')};
+else{try{R=JSON.parse(ls('quizHost'))}catch(e){}}
+const fmt=n=>(Math.round(n*10)/10).toString().replace(/^-/,'−');
+async function load(){
+  if(!R){$('meta').textContent='部屋の情報がありません。出題者の画面から「結果ページ」を開いてください。';return;}
+  if(!Object.keys(teamBy).length){(await (await fetch('/api/config')).json()).teams.forEach(t=>teamBy[t.id]=t);}
+  const r=await fetch(`/api/results?room=${encodeURIComponent(R.room)}&hostpw=${encodeURIComponent(R.hostpw)}`);
+  if(r.status===403){$('meta').textContent='この部屋は見つかりません（終了したか、サーバーが再起動しました）。';return;}
+  D=await r.json(); draw();
+}
+function rank(){
+  const a=D.teams.map(id=>({id,s:D.scores[id]})).sort((x,y)=>y.s-x.s);let rk=0,last=null;
+  return a.map((x,i)=>{if(x.s!==last){rk=i+1;last=x.s;}x.rk=rk;return x;});
+}
+function draw(){
+  $('meta').textContent=`部屋番号 ${D.room} ／ ${D.phase==='finished'?'終了':'進行中'}（${Math.min(D.pos+1,D.total)} / ${D.total} 問目）`;
+  $('upd').textContent='自動更新中 '+new Date().toLocaleTimeString('ja-JP');
+  $('board').innerHTML=rank().map(x=>{const t=teamBy[x.id],st=D.stats[x.id];
+    return `<div class="row ${x.rk===1&&x.s>0?'first':''}"><div class="n">${x.rk}位</div><img src="${t.icon}" alt=""><div class="nm">${t.name}<small>正解 ${st.correct} ／ お手付き ${st.wrong}</small></div><div class="adj"><button data-t="${x.id}" data-d="-1">−</button><button data-t="${x.id}" data-d="1">＋</button></div><div class="pt">${fmt(x.s)}</div></div>`;}).join('');
+  $('hist').innerHTML=D.history.map(h=>`<tr><td>${h.no}</td><td>${esc(h.title)}<br><span class="sub">${esc(h.artist)}</span></td><td>${h.skipped?'<span class="sub">飛ばした</span>':(h.events.length?h.events.map(e=>`<div class="${e.type==='correct'?'c':'w'}">${teamBy[e.team].name} ${e.type==='correct'?'正解 +1':'お手付き −0.5'}</div>`).join(''):'<span class="sub">正解なし</span>')}</td></tr>`).join('')||'<tr><td colspan="3" class="sub">まだ記録がありません</td></tr>';
+}
+$('board').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
+  await fetch('/api/host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({room:R.room,hostpw:R.hostpw,action:'adjust',team:b.dataset.t,delta:+b.dataset.d})});load();};
+$('csv').onclick=()=>{
+  if(!D)return;
+  const q=s=>'"'+String(s).replace(/"/g,'""')+'"';
+  let c='順位,チーム,得点,正解数,お手付き数,手動修正\n';
+  rank().forEach(x=>{c+=[x.rk,q(teamBy[x.id].name),x.s,D.stats[x.id].correct,D.stats[x.id].wrong,D.adj[x.id]].join(',')+'\n';});
+  c+='\n問,曲名,歌手,結果\n';
+  D.history.forEach(h=>{c+=[h.no,q(h.title),q(h.artist),q(h.skipped?'飛ばした':(h.events.map(e=>teamBy[e.team].name+(e.type==='correct'?' 正解+1':' お手付き-0.5')).join(' / ')||'正解なし'))].join(',')+'\n';});
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+c],{type:'text/csv'}));
+  a.download=`イントロクイズ結果_${D.room}.csv`;document.body.appendChild(a);a.click();a.remove();
+};
+load();setInterval(load,3000);
+</script>
+</body>
+</html>

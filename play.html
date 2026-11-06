@@ -51,9 +51,9 @@ p.sub{text-align:center;color:var(--mute);margin:0 0 20px}
 </head>
 <body>
 <section id="entryWrap" hidden>
-  <h1>イントロクイズ</h1><p class="sub">部屋のパスワードを入力してください</p>
+  <h1>イントロクイズ</h1><p class="sub">出題者の画面に出ている<br>部屋番号を入力してください</p>
   <form class="entry" id="fEntry" autocomplete="off">
-    <input type="text" id="roomIn" placeholder="パスワード" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <input type="text" id="roomIn" placeholder="部屋番号（4桁）" inputmode="numeric" pattern="[0-9]*" autocomplete="off" spellcheck="false">
     <p class="err" id="eEntry"></p>
     <button type="submit">入室</button>
   </form>
@@ -62,7 +62,7 @@ p.sub{text-align:center;color:var(--mute);margin:0 0 20px}
   <h1>チームを選んでください</h1><p class="sub">自分のチームのアイコンをタップ</p>
   <p class="err" id="ePick"></p>
   <div id="pick"></div>
-  <div style="text-align:center"><button class="linkbtn" id="exitRoom">別の部屋に入る</button></div>
+  <div style="text-align:center"><button class="linkbtn" id="exitRoom">別の部屋に入る</button> <a class="linkbtn" href="index.html" style="color:var(--mute)">最初の画面へ</a></div>
 </section>
 <section id="play" hidden>
   <div class="top"><img id="myicon" alt=""><div class="st"><span id="myname"></span><small id="conn">接続中…</small></div><button id="change">チーム変更</button></div>
@@ -71,7 +71,7 @@ p.sub{text-align:center;color:var(--mute);margin:0 0 20px}
 </section>
 <script>
 const $=id=>document.getElementById(id);
-let cfg,S=null,me=null,room='',es=null,pressed=false,lastRun=-1,mode='entry';
+let cfg,S=null,me=null,room='',es=null,pressed=false,lastRun=-1,mode='entry',openAt=0,openT=null;
 const myId=Math.random().toString(36).slice(2)+Date.now().toString(36);
 function store(k,v){try{if(v===undefined)return localStorage.getItem(k);if(v===null)localStorage.removeItem(k);else localStorage.setItem(k,v);}catch(e){return null}}
 const send=(path,body)=>{try{return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({room,...body}),keepalive:true}).then(r=>r.json()).catch(()=>null);}catch(e){return Promise.resolve(null)}};
@@ -94,7 +94,7 @@ async function init(){
   cfg=await (await fetch('/api/config')).json();
   const q=new URLSearchParams(location.search).get('r');
   const cand=q||store('room')||'';
-  if(cand){const ok=await tryRoom(cand);if(ok)return;if(q)$('eEntry').textContent='その部屋が見つかりません。パスワードを確認してください';}
+  if(cand){const ok=await tryRoom(cand);if(ok)return;if(q)$('eEntry').textContent='その部屋が見つかりません。部屋番号を確認してください';}
   $('roomIn').value=q||'';show('entry');
 }
 async function tryRoom(pw){
@@ -110,7 +110,7 @@ function backToEntry(msg){
 $('fEntry').onsubmit=async e=>{
   e.preventDefault();$('eEntry').textContent='';
   const v=$('roomIn').value.trim();if(!v)return;
-  if(!(await tryRoom(v)))$('eEntry').textContent='その部屋が見つかりません。パスワードを確認してください';
+  if(!(await tryRoom(v)))$('eEntry').textContent='その部屋が見つかりません。部屋番号を確認してください';
 };
 $('exitRoom').onclick=()=>backToEntry('');
 
@@ -148,22 +148,25 @@ async function choose(id){
 }
 function render(){
   if(!me||!S)return;
-  $('myname').textContent=`${me.name}　★${(S.scores||{})[me.id]||0}`;
-  if(S.run!==lastRun){pressed=false;lastRun=S.run;}
+  $('myname').textContent=me.name;
+  if(S.run!==lastRun){pressed=false;lastRun=S.run;openAt=Date.now()+(S.delay||0);}
   const btn=$('btn'),note=$('note');btn.className='';note.className='note';
   const idx=S.order.findIndex(o=>o.team===me.id);
   const iAmCur=S.phase==='buzzed'&&S.order[S.cur]&&S.order[S.cur].team===me.id;
   const wrong=S.wrong.includes(me.id);
   if(S.phase==='finished'){
-    const mine=S.scores[me.id]||0,rk=1+S.teams.filter(id=>(S.scores[id]||0)>mine).length;
-    btn.disabled=true;btn.className='';btn.style.display='none';
+    btn.disabled=true;btn.style.display='none';
     let f=$('finBox');if(!f){f=document.createElement('div');f.id='finBox';f.className='fin';$('play').insertBefore(f,btn);}
-    f.hidden=false;f.innerHTML=`<div>結果発表</div><div class="r">${rk}位</div><div>${mine} 問正解</div>`;
-    note.textContent='おつかれさまでした！';return;
+    f.hidden=false;f.innerHTML='<div class="r" style="font-size:44px">おつかれさま<br>でした！</div><div>結果は後で発表されます</div>';
+    note.textContent='';return;
   }
   btn.style.display='';const f=$('finBox');if(f)f.hidden=true;
   if(S.phase==='ready'){btn.disabled=true;btn.textContent='待機中';note.textContent='出題者のスタートを待っています';}
-  else if(S.phase==='playing'){btn.disabled=false;btn.className='open';btn.innerHTML='PUSH';note.textContent='わかったら押す！';}
+  else if(S.phase==='playing'){
+    const wait=(openAt-Date.now());
+    if(wait>0){btn.disabled=true;btn.textContent='…';note.textContent='もうすぐ！';clearTimeout(openT);openT=setTimeout(render,wait+20);}
+    else{btn.disabled=false;btn.className='open';btn.innerHTML='PUSH';note.textContent='わかったら押す！';}
+  }
   else if(S.phase==='buzzed'){
     if(idx>=0){
       btn.disabled=true;btn.className='me';
@@ -175,7 +178,7 @@ function render(){
     else{btn.disabled=true;btn.textContent='受付終了';note.textContent='';}
   }else{
     btn.disabled=true;
-    if(S.winner===me.id){btn.className='me';btn.innerHTML='正解！<small>+1点</small>';note.textContent='おめでとう！';note.classList.add('hot');}
+    if(S.winner===me.id){btn.className='me';btn.innerHTML='正解！';note.textContent='おめでとう！';note.classList.add('hot');}
     else{btn.textContent='正解発表';note.textContent=S.winner?teamBy(S.winner).name+'が正解':'';}
   }
 }

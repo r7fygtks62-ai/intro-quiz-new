@@ -75,7 +75,7 @@ footer{display:flex;gap:14px;justify-content:center;padding:18px 28px 26px;flex-
 @media (prefers-reduced-motion:reduce){.eq i,.hero,.answer{animation:none}}
 
 .tile .sc{position:absolute;left:8px;top:8px;background:#000a;border-radius:999px;padding:2px 10px;font-size:15px;color:var(--accent)}
-.join .pw{font-size:22px;color:var(--accent);font-weight:700;letter-spacing:.04em;word-break:break-all;max-width:260px}
+.join .pw{font-size:34px;color:var(--accent);font-weight:700;letter-spacing:.04em;word-break:break-all;max-width:260px}
 .join .pw small{display:block;font-size:12px;color:var(--mute);font-weight:400;letter-spacing:0}
 .join button{background:#ffffff14;border-radius:10px;padding:6px 10px;font-size:12px;color:var(--mute);margin-top:6px}
 .board{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
@@ -122,11 +122,8 @@ h2.fin{margin:0;font-size:clamp(32px,5vw,56px);letter-spacing:.08em}
 <body>
 <div id="setup"><div class="box">
   <h1>イントロクイズ 出題者</h1>
-  <p class="lead">部屋を作ると、参加者はパスワード（またはQRコード）でその部屋に入れます。</p>
-  <div class="tabs"><button id="tabNew" class="on">部屋を作る</button><button id="tabIn">部屋に入りなおす</button></div>
+  <p class="lead">部屋を作ると、4桁の「部屋番号」とQRコードが出ます。参加者はそのどちらかで入れます。</p>
   <form id="fNew" autocomplete="off">
-    <div class="f"><label>参加者用パスワード<small>参加者が入力 / QRコードに入ります（3文字以上）</small></label><input type="text" id="nRoom" placeholder="例: kgu1107"></div>
-    <div class="f"><label>出題者用パスワード<small>出題者だけが操作するための合言葉（3文字以上）</small></label><input type="text" id="nHost" placeholder="例: master"></div>
     <div class="f"><label>チーム数</label><div class="seg" id="segN"></div></div>
     <div class="f"><label>1チームの参加台数<small>スマホが何台まで入れるか</small></label>
       <div class="step"><button type="button" id="capM">−</button><b id="capV">1</b><button type="button" id="capP">＋</button><span>台まで</span></div></div>
@@ -135,19 +132,12 @@ h2.fin{margin:0;font-size:clamp(32px,5vw,56px);letter-spacing:.08em}
     <div class="err" id="eNew"></div>
     <button class="go" type="submit">部屋を作る</button>
   </form>
-  <form id="fIn" autocomplete="off" hidden>
-    <div class="f"><label>参加者用パスワード</label><input type="text" id="iRoom"></div>
-    <div class="f"><label>出題者用パスワード</label><input type="text" id="iHost"></div>
-    <div class="err" id="eIn"></div>
-    <button class="go" type="submit">出題者として入る</button>
-    <p class="hint">部屋は、サーバーが再起動すると消えます。消えていたら作りなおしてください。</p>
-  </form>
 </div></div>
 <div id="unlock" hidden><div><button id="unlockBtn">クリックして開始</button><p>音を出すために、最初に1回だけクリックしてください</p></div></div>
 <header>
   <div class="counter">第<b id="no">1</b>問 / <span id="total">1</span></div>
   <div class="chip" id="chip">待機中</div>
-  <div class="join"><div><div class="pw" id="pw"><small>参加パスワード</small><span id="pwv"></span></div><div class="url" id="url"></div><button id="bClose">部屋を閉じる</button></div><div id="qr"></div></div>
+  <div class="join"><div><div class="pw" id="pw"><small>部屋番号</small><span id="pwv"></span></div><div class="url" id="url"></div><button id="bResultsOpen">結果ページ</button> <button id="bResultsCopy">リンクをコピー</button> <button id="bClose">部屋を閉じる</button></div><div id="qr"></div></div>
 </header>
 <main id="stage"></main>
 <footer id="ctl">
@@ -160,7 +150,6 @@ h2.fin{margin:0;font-size:clamp(32px,5vw,56px);letter-spacing:.08em}
   <button class="btn" id="bChorus" hidden>♪ もう一度サビ</button>
   <button class="btn main" id="bNext" hidden>次の曲 ▶▶<small>Space</small></button>
   <button class="btn" id="bNext2">次の曲 ▶</button>
-  <button class="btn" id="bEdit" hidden>得点を直す</button>
   <button class="btn" id="bFinish" hidden>終了して結果へ</button>
   <button class="btn" id="bReset" hidden>リセット</button>
   <button class="btn main" id="bAgain" hidden>もう一度最初から</button>
@@ -170,13 +159,11 @@ h2.fin{margin:0;font-size:clamp(32px,5vw,56px);letter-spacing:.08em}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ls={get(k){try{return localStorage.getItem(k)||''}catch(e){return ''}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
-let cfg,songs=[],R=null,S=null,es=null,teamBy={},teams=[],intro=new Audio(),chorus=new Audio(),prev={},edit=false,capV=1,nSel=8;
+let cfg,songs=[],R=null,S=null,es=null,teamBy={},teams=[],intro=new Audio(),chorus=new Audio(),prev={},capV=1,nSel=8,resultsUrl='',ac=null;
 const REASON={key:'部屋作成の合言葉が違います',room_len:'参加者用パスワードは3〜32文字にしてください',host_len:'出題者用パスワードは3〜32文字にしてください',same:'参加者用と出題者用は別のパスワードにしてください',exists:'そのパスワードの部屋は既にあります。別のパスワードにしてください',full:'部屋が多すぎます。しばらくしてからにしてください',nosongs:'曲が登録されていません',wait:'失敗が続いたため、少し待ってからやりなおしてください',bad:'入力を確認してください'};
 const tileHTML=(t,cls='',inner='')=>`<div class="tile ${cls}"><img src="${t.icon}" alt="${t.name}">${inner}</div>`;
 
 /* ---------- 部屋づくり ---------- */
-function setTab(n){$('tabNew').classList.toggle('on',n);$('tabIn').classList.toggle('on',!n);$('fNew').hidden=!n;$('fIn').hidden=n;}
-$('tabNew').onclick=()=>setTab(true);$('tabIn').onclick=()=>setTab(false);
 function drawSeg(){$('segN').innerHTML=[2,3,4,5,6,7,8].map(n=>`<button type="button" data-n="${n}" class="${n===nSel?'on':''}">${n}</button>`).join('');}
 $('segN').onclick=e=>{const b=e.target.closest('button');if(b){nSel=+b.dataset.n;drawSeg();}};
 $('capM').onclick=()=>{capV=Math.max(1,capV-1);$('capV').textContent=capV;};
@@ -184,17 +171,9 @@ $('capP').onclick=()=>{capV=Math.min(30,capV+1);$('capV').textContent=capV;};
 async function jpost(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return r.json().catch(()=>({ok:false}));}
 $('fNew').onsubmit=async e=>{
   e.preventDefault();$('eNew').textContent='';
-  const room=$('nRoom').value.trim(),hostpw=$('nHost').value.trim();
-  const res=await jpost('/api/create',{room,hostpw,n:nSel,cap:capV,shuffle:$('nShuf').checked,key:$('nKey').value});
+  const res=await jpost('/api/create',{n:nSel,cap:capV,shuffle:$('nShuf').checked,key:$('nKey').value});
   if(!res.ok){$('eNew').textContent=REASON[res.reason]||'作成できませんでした';return;}
-  enter(room,hostpw);
-};
-$('fIn').onsubmit=async e=>{
-  e.preventDefault();$('eIn').textContent='';
-  const room=$('iRoom').value.trim(),hostpw=$('iHost').value.trim();
-  const res=await jpost('/api/host_login',{room,hostpw});
-  if(!res.ok){$('eIn').textContent=res.reason==='wait'?REASON.wait:'部屋が見つからないか、パスワードが違います';return;}
-  enter(room,hostpw);
+  enter(res.room,res.hostpw);
 };
 async function enter(room,hostpw){
   R={room,hostpw}; ls.set('quizHost',JSON.stringify(R));
@@ -203,8 +182,8 @@ async function enter(room,hostpw){
   $('setup').hidden=true; $('unlock').hidden=false;
   const isLocal=['localhost','127.0.0.1'].includes(location.hostname)||/^192\.168\.|^10\./.test(location.hostname);
   const base=(isLocal&&cfg.urls[0])||location.origin+'/';
-  const u=base+'?r='+encodeURIComponent(room);
-  $('pwv').textContent=room; $('url').textContent=base.replace(/^https?:\/\//,'');
+  const u=base+'play.html?r='+encodeURIComponent(room);
+  $('pwv').textContent=room;resultsUrl=location.origin+'/results.html?r='+encodeURIComponent(room)+'&k='+encodeURIComponent(hostpw); $('url').textContent=base.replace(/^https?:\/\//,'');
   $('qr').innerHTML='';
   try{const q=qrcode(0,'M');q.addData(u);q.make();$('qr').innerHTML=q.createImgTag(4,0);}catch(e){}
   intro.preload=chorus.preload='auto';
@@ -233,42 +212,63 @@ async function init(){
 
 /* ---------- 音 ---------- */
 function loadSong(){const s=songs[S.song];if(!s)return;intro.src=s.intro;chorus.src=s.chorus;intro.load();chorus.load();}
+/* ---------- 効果音（音ファイル不要・その場で作る） ---------- */
+function tone(f,t0,dur,type='sine',vol=.28,f2){
+  if(!ac)return; const o=ac.createOscillator(),g=ac.createGain(),n=ac.currentTime+t0;
+  o.type=type;o.frequency.setValueAtTime(f,n);if(f2)o.frequency.exponentialRampToValueAtTime(f2,n+dur);
+  g.gain.setValueAtTime(0.0001,n);g.gain.exponentialRampToValueAtTime(vol,n+.015);g.gain.exponentialRampToValueAtTime(0.0001,n+dur);
+  o.connect(g);g.connect(ac.destination);o.start(n);o.stop(n+dur+.05);
+}
+const sfx={
+  start(){tone(98,0,.42,'sawtooth',.22);tone(147,0,.42,'sawtooth',.14);tone(73,.45,.75,'sawtooth',.26);tone(110,.45,.75,'sawtooth',.16);},
+  ok(){tone(880,0,.18,'sine',.3);tone(1318,.16,.6,'sine',.3);tone(1760,.16,.6,'sine',.08);},
+  ng(){tone(160,0,.55,'sawtooth',.22,100);tone(150,0,.55,'square',.1,95);}
+};
+let introTimer=null,chorusTimer=null,nextTimer=null;
 function audioSync(){
   if(S.song!==undefined&&prev.song!==S.song)loadSong();
   const changed=prev.phase!==S.phase||prev.run!==S.run||prev.song!==S.song;
+  const wn=(S.wrong||[]).length;
+  if(S.phase==='buzzed'&&prev.phase==='buzzed'&&wn>(prev.wn||0))sfx.ng();
   if(changed){
-    if(S.phase==='playing'){chorus.pause();intro.currentTime=0;intro.play().catch(()=>{});}
+    clearTimeout(introTimer);clearTimeout(chorusTimer);clearTimeout(nextTimer);
+    if(S.phase==='playing'){
+      chorus.pause();intro.pause();intro.currentTime=0;sfx.start();
+      const run=S.run;introTimer=setTimeout(()=>{if(S&&S.phase==='playing'&&S.run===run)intro.play().catch(()=>{});},S.delay||1200);
+    }
     else if(S.phase==='buzzed'){intro.pause();chorus.pause();}
-    else if(S.phase==='answer'){intro.pause();chorus.currentTime=0;chorus.play().catch(()=>{});}
+    else if(S.phase==='answer'){
+      intro.pause();chorus.pause();chorus.currentTime=0;
+      if(S.winner){sfx.ok();chorusTimer=setTimeout(()=>{if(S&&S.phase==='answer')chorus.play().catch(()=>{});},900);}
+      else chorus.play().catch(()=>{});
+    }
     else{intro.pause();chorus.pause();}
   }
-  prev={phase:S.phase,run:S.run,song:S.song};
+  prev={phase:S.phase,run:S.run,song:S.song,wn};
 }
+chorus.onended=()=>{
+  const pos=S&&S.pos;clearTimeout(nextTimer);
+  nextTimer=setTimeout(()=>{if(S&&R&&S.phase==='answer'&&S.pos===pos)post('next',{from:pos});},1800);
+};
 function onState(){audioSync();render();}
 
 /* ---------- 表示 ---------- */
-function rankList(){
-  const arr=teams.map(t=>({t,s:S.scores[t.id]||0})).sort((a,b)=>b.s-a.s);
-  let rk=0,last=null;
-  return arr.map((x,i)=>{if(x.s!==last){rk=i+1;last=x.s;}x.rk=rk;return x;});
-}
 function render(){
   teams=S.teams.map(id=>teamBy[id]);
   const n=teams.length,c=n<=4?n:(n<=6?3:4),r=Math.ceil(n/c);
   document.documentElement.style.setProperty('--c',c);document.documentElement.style.setProperty('--r',r);
-  const ph=S.phase,order=S.order,joined=S.joined||{},sc=S.scores;
+  const ph=S.phase,order=S.order,joined=S.joined||{};
   const song=songs[S.song]||{title:'',artist:'',cover:''};
   $('no').textContent=Math.min(S.pos+1,S.total);$('total').textContent=S.total;
   const chip=$('chip');chip.className='chip';
   chip.textContent={ready:'待機中',playing:'♪ 再生中',buzzed:'早押し！',answer:'正解発表',finished:'終了'}[ph];
   if(ph==='playing')chip.classList.add('live');if(ph==='buzzed')chip.classList.add('stop');if(ph==='answer'||ph==='finished')chip.classList.add('ans');
   const st=$('stage');
-  const scoreBadge=t=>`<span class="sc">★${sc[t.id]||0}</span>`;
-  if(ph==='ready'||ph==='playing'){
-    const grid='<div class="grid">'+teams.map(t=>{const j=joined[t.id]||0;return tileHTML(t,j?'':'none',scoreBadge(t)+(j?`<span class="conn">${j}/${S.cap}台</span>`:`<span class="conn">0/${S.cap}台</span>`));}).join('')+'</div>';
+    if(ph==='ready'||ph==='playing'){
+    const grid='<div class="grid">'+teams.map(t=>{const j=joined[t.id]||0;return tileHTML(t,j?'':'none',`<span class="conn">${j}/${S.cap}台</span>`);}).join('')+'</div>';
     const info=ph==='playing'
       ?'<div class="eq"><i></i><i></i><i></i><i></i><i></i></div><div class="bar"><i id="prog"></i></div>'
-      :'<div class="msg">スタートを押すとイントロが流れます</div>'+(edit?board(true):'');
+      :'<div class="msg">スタートを押すとイントロが流れます</div>';
     st.innerHTML=grid+info;
   }else if(ph==='buzzed'){
     const cur=S.cur,strip='<div class="strip">'+teams.map(t=>{
@@ -282,26 +282,20 @@ function render(){
   }else if(ph==='answer'){
     const w=S.winner?teamBy[S.winner]:null;
     st.innerHTML=`<div class="answer"><img src="${song.cover}" alt=""><div><div class="t">${esc(song.title)}</div><div class="a">${esc(song.artist)}</div>`+
-      (w?`<div class="w">${tileHTML(w)}<span>${w.name} 正解！ +1点</span></div>`:'')+`</div></div>`+board(edit);
+      (w?`<div class="w">${tileHTML(w)}<span>${w.name} 正解！</span></div>`:'')+`</div></div>`;
   }else{
-    const rl=rankList();
-    st.innerHTML=`<h2 class="fin">結果発表</h2><div class="rank-list">`+rl.map(x=>`<div class="row ${x.rk===1?'first':''}"><div class="n">${x.rk}位</div>${tileHTML(x.t)}<div class="nm">${x.t.name}</div><div class="pt">${x.s}<small style="font-size:16px"> 問正解</small></div></div>`).join('')+`</div>`;
+    st.innerHTML=`<h2 class="fin">全問終了！</h2><div class="msg">おつかれさまでした<br>結果は「結果ページ」で確認できます</div>`;
   }
   const last=S.pos===S.total-1,fin=ph==='finished';
   const show={bPrev:ph==='ready'&&S.pos>0,bStart:ph==='ready',bNext2:ph==='ready'&&S.total>1,
     bOk:ph==='buzzed'&&S.cur<order.length,bNg:ph==='buzzed'&&S.cur<order.length,
     bResume:ph==='buzzed',bReveal:ph==='playing'||(ph==='buzzed'&&S.cur>=order.length),
     bChorus:ph==='answer',bNext:ph==='answer',bReset:ph==='playing'||ph==='buzzed'||ph==='answer',
-    bEdit:ph==='ready'||ph==='answer',bFinish:ph==='ready'||ph==='answer',bAgain:fin};
+    bFinish:ph==='ready'||ph==='answer',bAgain:fin};
   for(const k in show)$(k).hidden=!show[k];
   $('bNext').innerHTML=(last?'結果発表へ ▶▶':'次の曲 ▶▶')+'<small>Space</small>';
   $('bNext2').textContent=last?'結果発表へ ▶':'この曲を飛ばす ▶';
-  $('bEdit').textContent=edit?'得点修正を閉じる':'得点を直す';
 }
-function board(withAdj){
-  return '<div class="board">'+teams.map(t=>`<div class="it">${tileHTML(t)}<b>★${S.scores[t.id]||0}</b>${withAdj?`<div class="adj"><button data-a="-1" data-t="${t.id}">−</button><button data-a="1" data-t="${t.id}">＋</button></div>`:''}</div>`).join('')+'</div>';
-}
-$('stage').addEventListener('click',e=>{const b=e.target.closest('.adj button');if(b)post('adjust',{team:b.dataset.t,delta:+b.dataset.a});});
 setInterval(()=>{const p=$('prog');if(p&&intro.duration)p.style.width=Math.min(100,intro.currentTime/intro.duration*100)+'%';},100);
 
 $('bStart').onclick=()=>post('start');
@@ -312,13 +306,15 @@ $('bOk').onclick=()=>post('correct');
 $('bNg').onclick=()=>post('wrong');
 $('bReveal').onclick=()=>post('reveal');
 $('bReset').onclick=()=>post('reset');
-$('bAgain').onclick=()=>{if(confirm('得点をリセットして、最初からやりなおしますか？'))post('restart');};
+$('bAgain').onclick=()=>{if(confirm('得点も記録もリセットして、最初からやりなおします。先に結果ページでCSVを保存しましたか？'))post('restart');};
 $('bFinish').onclick=()=>{if(confirm('ここで終了して結果発表にしますか？'))post('finish');};
-$('bEdit').onclick=()=>{edit=!edit;if(S)render();};
 $('bClose').onclick=()=>{if(confirm('この部屋を閉じますか？参加者の画面も終了します。'))post('close').then(leaveRoom);};
+$('bResultsOpen').onclick=()=>window.open(resultsUrl,'_blank');
+$('bResultsCopy').onclick=async()=>{const b=$('bResultsCopy');try{await navigator.clipboard.writeText(resultsUrl);b.textContent='コピーしました';}catch(e){prompt('このリンクをコピーしてください',resultsUrl);}setTimeout(()=>b.textContent='リンクをコピー',1800);};
 $('bResume').onclick=()=>intro.play().catch(()=>{});
 $('bChorus').onclick=()=>{chorus.currentTime=0;chorus.play().catch(()=>{});};
 $('unlockBtn').onclick=()=>{
+  try{ac=new (window.AudioContext||window.webkitAudioContext)();ac.resume();}catch(e){}
   [intro,chorus].forEach(a=>{a.muted=true;a.play().then(()=>{a.pause();a.currentTime=0;a.muted=false;}).catch(()=>{a.muted=false;});});
   $('unlock').hidden=true;
 };

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>イントロクイズ</title>
+<style>
+:root{--bg:#0d1130;--bg2:#161c47;--ink:#fdfde8;--mute:#8d93c4;--accent:#ffd23f;
+  --display:"Hiragino Maru Gothic ProN","Yu Gothic UI","Meiryo","Noto Sans JP",system-ui,sans-serif}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(1000px 700px at 50% 30%,var(--bg2),var(--bg));color:var(--ink);font-family:var(--display);display:flex;align-items:center;justify-content:center;padding:24px}
+.box{width:min(460px,100%);text-align:center}
+h1{font-size:clamp(34px,9vw,52px);margin:0 0 6px;letter-spacing:.06em}
+p{color:var(--mute);margin:0 0 34px}
+a{display:block;padding:24px 16px;border-radius:22px;font-size:26px;font-weight:700;text-decoration:none;margin-bottom:16px;color:#1b1b2e;background:var(--accent)}
+a small{display:block;font-size:14px;font-weight:400;margin-top:6px;opacity:.7}
+a.sub{background:#ffffff1a;color:var(--ink)}
+a:active{transform:scale(.97)}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>イントロクイズ</h1>
+  <p>どちらで入りますか？</p>
+  <a href="play.html" id="p">参加者として入る<small>部屋番号を入力、またはQRコードから</small></a>
+  <a href="host" class="sub">出題者として入る<small>部屋を作ります</small></a>
+</div>
+<script>
+const r=new URLSearchParams(location.search).get('r');
+if(r)location.replace('play.html?r='+encodeURIComponent(r));
+</script>
+</body>
+</html>
