@@ -5,5 +5,12 @@
     "intro": "01_intro.mp3",
     "chorus": "01_chorus.mp3",
     "cover": "01_cover.jpg"
+  },
+  {
+    "title": "ロビンソン",
+    "artist": "スピッツ",
+    "intro": "02_intro.mp3",
+    "chorus": "02_chorus.mp3",
+    "cover": "02_cover.jpg"
   }
 ]
