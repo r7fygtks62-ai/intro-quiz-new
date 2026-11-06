@@ -1,0 +1,44 @@
+[
+  {
+    "id": "A",
+    "name": "Aチーム",
+    "color": "#78dcfc",
+    "icon": "A.png"
+  },
+  {
+    "id": "B",
+    "name": "Bチーム",
+    "color": "#00bf62",
+    "icon": "B.png"
+  },
+  {
+    "id": "C",
+    "name": "Cチーム",
+    "color": "#a54ca6",
+    "icon": "C.png"
+  },
+  {
+    "id": "D",
+    "name": "Dチーム",
+    "color": "#f389cb",
+    "icon": "D.png"
+  },
+  {
+    "id": "E",
+    "name": "Eチーム",
+    "color": "#1800ac",
+    "icon": "E.png"
+  },
+  {
+    "id": "F",
+    "name": "Fチーム",
+    "color": "#b73a4a",
+    "icon": "F.png"
+  },
+  {
+    "id": "G",
+    "name": "Gチーム",
+    "color": "#ffa520",
+    "icon": "G.png"
+  }
+]

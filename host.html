@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>イントロクイズ 出題者</title>
+<style>
+:root{
+  --bg:#0d1130; --bg2:#161c47; --ink:#fdfde8; --mute:#8d93c4; --accent:#ffd23f;
+  --ok:#2fd27a; --ng:#ff5d6c; --radius:22px;
+  --display:"Hiragino Maru Gothic ProN","Yu Gothic UI","Meiryo","Noto Sans JP",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:radial-gradient(1200px 700px at 50% 40%,var(--bg2),var(--bg));color:var(--ink);font-family:var(--display);overflow:hidden;display:flex;flex-direction:column}
+button{font:inherit;color:inherit;cursor:pointer;border:0}
+header{display:flex;align-items:center;gap:20px;padding:16px 28px;min-height:84px}
+.counter{font-size:20px;color:var(--mute);letter-spacing:.08em}
+.counter b{color:var(--ink);font-size:30px;margin:0 4px}
+.chip{padding:8px 18px;border-radius:999px;background:#ffffff14;font-size:18px;letter-spacing:.06em}
+.chip.live{background:var(--accent);color:#1b1b2e;font-weight:700}
+.chip.stop{background:var(--ng);color:#fff;font-weight:700}
+.chip.ans{background:var(--ok);color:#06251a;font-weight:700}
+.join{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:14px;color:var(--mute);text-align:right}
+.join .url{font-size:16px;color:var(--ink);word-break:break-all;max-width:300px}
+.join canvas,.join img{width:68px;height:68px;border-radius:8px;background:#fff;padding:4px}
+main{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 28px;gap:22px}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:22px;width:min(1000px,100%,max(300px,calc(2*(100vh - 372px) + 66px)))}
+.tile{position:relative;aspect-ratio:1;border-radius:var(--radius);overflow:hidden;background:#000;box-shadow:0 8px 24px #0006}
+.tile img{width:100%;height:100%;display:block}
+.tile .conn{position:absolute;right:8px;bottom:8px;background:#000a;border-radius:999px;padding:2px 10px;font-size:14px}
+.grid .tile.none{opacity:.28}
+.msg{font-size:26px;color:var(--mute);letter-spacing:.06em;text-align:center}
+.eq{display:flex;gap:6px;align-items:flex-end;height:44px}
+.eq i{width:8px;background:var(--accent);border-radius:3px;animation:eq 0.9s ease-in-out infinite}
+.eq i:nth-child(2){animation-delay:-.2s}.eq i:nth-child(3){animation-delay:-.5s}.eq i:nth-child(4){animation-delay:-.1s}.eq i:nth-child(5){animation-delay:-.7s}
+@keyframes eq{0%,100%{height:8px}50%{height:44px}}
+.bar{width:min(520px,70vw);height:6px;border-radius:3px;background:#ffffff1c;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent)}
+/* 回答中ステージ */
+.hero{position:relative;width:min(46vh,420px);aspect-ratio:1;border-radius:34px;overflow:hidden;box-shadow:0 0 0 6px var(--accent),0 20px 60px #000a;animation:pop .35s cubic-bezier(.2,1.4,.4,1)}
+.hero img{width:100%;height:100%;display:block}
+@keyframes pop{from{transform:scale(.5);opacity:0}to{transform:none;opacity:1}}
+.rank{font-size:34px;font-weight:700;letter-spacing:.06em}
+.rank small{font-size:20px;color:var(--mute);font-weight:400;margin-left:10px}
+.strip{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.strip .tile{width:min(9vw,92px);box-shadow:none}
+.strip .tile.none{opacity:.22}
+.strip .tile.cur{outline:4px solid var(--accent);outline-offset:3px}
+.strip .tile.wrong{opacity:.4;filter:grayscale(.7)}
+.strip .tile .b{position:absolute;left:6px;top:6px;min-width:26px;height:26px;border-radius:13px;background:#000b;display:grid;place-items:center;font-size:15px;padding:0 6px}
+.strip .tile.wrong .b{background:var(--ng)}
+.allwrong{font-size:44px;font-weight:700;color:var(--ng)}
+/* 正解 */
+.answer{display:flex;align-items:center;gap:40px;animation:pop .4s cubic-bezier(.2,1.4,.4,1)}
+.answer>img{width:min(46vh,420px);aspect-ratio:1;border-radius:14px;box-shadow:0 20px 60px #000a;object-fit:cover}
+.answer .t{font-size:clamp(40px,6vw,84px);font-weight:700;line-height:1.1}
+.answer .a{font-size:clamp(22px,2.6vw,36px);color:var(--mute);margin-top:12px}
+.answer .w{display:flex;align-items:center;gap:14px;margin-top:26px}
+.answer .w .tile{width:84px}
+.answer .w span{font-size:22px}
+footer{display:flex;gap:14px;justify-content:center;padding:18px 28px 26px;flex-wrap:wrap}
+.btn{padding:16px 34px;border-radius:16px;font-size:22px;font-weight:700;background:#ffffff1a;transition:transform .08s}
+.btn:active{transform:scale(.96)}
+.btn.main{background:var(--accent);color:#1b1b2e}
+.btn.ok{background:var(--ok);color:#06251a}
+.btn.ng{background:var(--ng);color:#fff}
+.btn small{font-weight:400;opacity:.65;font-size:13px;margin-left:8px}
+.btn[hidden]{display:none}
+[hidden]{display:none!important}
+#unlock{position:fixed;inset:0;background:#0d1130f2;display:grid;place-items:center;z-index:9;text-align:center}
+#unlock button{background:var(--accent);color:#1b1b2e;font-size:30px;font-weight:700;padding:26px 56px;border-radius:22px}
+#unlock p{color:var(--mute);margin-top:18px}
+@media (max-width:760px){.grid{grid-template-columns:repeat(4,1fr);gap:10px}.join{display:none}.answer{flex-direction:column;gap:18px;text-align:center}}
+@media (prefers-reduced-motion:reduce){.eq i,.hero,.answer{animation:none}}
+</style>
+</head>
+<body>
+<div id="unlock"><div><button id="unlockBtn">クリックして開始</button><p>音を出すために、最初に1回だけクリックしてください</p></div></div>
+<header>
+  <div class="counter">第<b id="no">1</b>問 / <span id="total">1</span></div>
+  <div class="chip" id="chip">待機中</div>
+  <div class="join"><div><div>スマホで開く</div><div class="url" id="url"></div></div><div id="qr"></div></div>
+</header>
+<main id="stage"></main>
+<footer id="ctl">
+  <button class="btn" id="bPrev">◀ 前の曲</button>
+  <button class="btn main" id="bStart">▶ スタート<small>Space</small></button>
+  <button class="btn" id="bRestart" hidden>もう一度イントロ</button>
+  <button class="btn ok" id="bOk" hidden>正解 ○<small>O</small></button>
+  <button class="btn ng" id="bNg" hidden>不正解 ×<small>X</small></button>
+  <button class="btn" id="bResume" hidden>♪ 続きを再生</button>
+  <button class="btn" id="bReveal" hidden>答えを見る</button>
+  <button class="btn" id="bChorus" hidden>♪ もう一度サビ</button>
+  <button class="btn main" id="bNext" hidden>次の曲 ▶▶<small>Space</small></button>
+  <button class="btn" id="bNext2">次の曲 ▶</button>
+  <button class="btn" id="bReset" hidden>リセット</button>
+</footer>
+<script src="qrcode.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+let cfg, S=null, teamBy={}, intro=new Audio(), chorus=new Audio(), prev={};
+const getKey=()=>{try{return localStorage.getItem('hostKey')||''}catch(e){return ''}};
+const askKey=()=>{const k=prompt('出題者の合言葉を入力してください');if(k!==null){try{localStorage.setItem('hostKey',k)}catch(e){}}return k||''};
+const post=async(a,extra={})=>{
+  const r=await fetch('/api/host',{method:'POST',headers:{'Content-Type':'application/json','X-Host-Key':getKey()},body:JSON.stringify({action:a,...extra})});
+  if(r.status===403){askKey();}
+  return r;
+};
+const tileHTML=(t,cls='',inner='')=>`<div class="tile ${cls}"><img src="${t.icon}" alt="${t.name}">${inner}</div>`;
+
+async function init(){
+  cfg=await (await fetch('/api/config')).json();
+  cfg.teams.forEach(t=>teamBy[t.id]=t);
+  $('total').textContent=cfg.songs.length;
+  const isLocal=['localhost','127.0.0.1'].includes(location.hostname)||/^192\.168\.|^10\./.test(location.hostname);
+  const u=(isLocal&&cfg.urls[0])||location.origin+'/';
+  if(cfg.needKey&&!getKey())askKey();
+  $('url').textContent=u.replace(/^https?:\/\//,'');
+  try{const q=qrcode(0,'M');q.addData(u);q.make();$('qr').innerHTML=q.createImgTag(4,0);}catch(e){}
+  intro.preload=chorus.preload='auto';
+  const es=new EventSource('/api/events');
+  es.onmessage=e=>{S=JSON.parse(e.data);onState();};
+}
+
+function loadSong(){
+  const s=cfg.songs[S.song];
+  intro.src=s.intro; chorus.src=s.chorus; intro.load(); chorus.load();
+}
+function audioSync(){
+  if(prev.song!==S.song) loadSong();
+  const changed=prev.phase!==S.phase||prev.run!==S.run||prev.song!==S.song;
+  if(changed){
+    if(S.phase==='playing'){chorus.pause();intro.currentTime=0;intro.play().catch(()=>{});}
+    else if(S.phase==='buzzed'){intro.pause();chorus.pause();}
+    else if(S.phase==='answer'){intro.pause();chorus.currentTime=0;chorus.play().catch(()=>{});}
+    else {intro.pause();chorus.pause();}
+  }
+  prev={phase:S.phase,run:S.run,song:S.song};
+}
+
+function onState(){ audioSync(); render(); }
+
+function render(){
+  const song=cfg.songs[S.song], ph=S.phase, order=S.order, joined=S.joined||{};
+  $('no').textContent=S.song+1;
+  const chip=$('chip');
+  chip.className='chip'; 
+  chip.textContent={ready:'待機中',playing:'♪ 再生中',buzzed:'早押し！',answer:'正解発表'}[ph];
+  if(ph==='playing')chip.classList.add('live'); if(ph==='buzzed')chip.classList.add('stop'); if(ph==='answer')chip.classList.add('ans');
+  const st=$('stage');
+  if(ph==='ready'||ph==='playing'){
+    const grid='<div class="grid">'+cfg.teams.map(t=>tileHTML(t,joined[t.id]?'':'none',joined[t.id]?`<span class="conn">${joined[t.id]}台</span>`:'')).join('')+'</div>';
+    const info=ph==='playing'
+      ?'<div class="eq"><i></i><i></i><i></i><i></i><i></i></div><div class="bar"><i id="prog"></i></div>'
+      :'<div class="msg">スタートを押すとイントロが流れます</div>';
+    st.innerHTML=grid+info;
+  }else if(ph==='buzzed'){
+    const cur=S.cur, strip='<div class="strip">'+cfg.teams.map(t=>{
+      const i=order.findIndex(o=>o.team===t.id), isW=S.wrong.includes(t.id);
+      const cls=(i<0?'none ':'')+(isW?'wrong ':'')+(i===cur?'cur':'');
+      return tileHTML(t,cls,i>=0?`<span class="b">${isW?'×':i+1}</span>`:'');
+    }).join('')+'</div>';
+    if(cur<order.length){
+      const o=order[cur], d=cur>0?`<small>最速より +${((o.ms-order[0].ms)/1000).toFixed(2)}秒</small>`:'';
+      st.innerHTML=`<div class="hero"><img src="${teamBy[o.team].icon}" alt=""></div><div class="rank">${cur+1}位${d}</div>`+strip;
+    }else{
+      st.innerHTML=`<div class="allwrong">全チーム不正解…</div>`+strip;
+    }
+  }else{
+    const w=order.length&&S.cur<=order.length&&S.cur>0?null:null;
+    const winner=(S.phase==='answer'&&S.order[S.cur])?teamBy[S.order[S.cur].team]:null;
+    st.innerHTML=`<div class="answer"><img src="${song.cover}" alt=""><div><div class="t">${esc(song.title)}</div><div class="a">${esc(song.artist)}</div>`+
+      (winner?`<div class="w">${tileHTML(winner)}<span>${winner.name} 正解！</span></div>`:'')+`</div></div>`;
+  }
+  const last=S.song===cfg.songs.length-1;
+  const show={bPrev:ph==='ready'&&cfg.songs.length>1,bStart:ph==='ready',bNext2:ph==='ready'&&cfg.songs.length>1,
+    bRestart:ph==='buzzed'&&false,bOk:ph==='buzzed'&&S.cur<order.length,bNg:ph==='buzzed'&&S.cur<order.length,
+    bResume:ph==='buzzed',bReveal:ph==='playing'||(ph==='buzzed'&&S.cur>=order.length),
+    bChorus:ph==='answer',bNext:ph==='answer',bReset:ph==='playing'||ph==='buzzed'||ph==='answer'};
+  for(const k in show)$(k).hidden=!show[k];
+  $('bNext').innerHTML=(last?(cfg.songs.length>1?'最初の曲へ':'もう一度出題'):'次の曲 ▶▶')+'<small>Space</small>';
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+setInterval(()=>{const p=$('prog');if(p&&intro.duration)p.style.width=Math.min(100,intro.currentTime/intro.duration*100)+'%';},100);
+
+$('bStart').onclick=()=>post('start');
+$('bPrev').onclick=()=>post('prev');
+$('bNext2').onclick=()=>post('next');
+$('bNext').onclick=()=>post('next');
+$('bOk').onclick=()=>post('correct');
+$('bNg').onclick=()=>post('wrong');
+$('bReveal').onclick=()=>post('reveal');
+$('bReset').onclick=()=>post('reset');
+$('bResume').onclick=()=>intro.play().catch(()=>{});
+$('bChorus').onclick=()=>{chorus.currentTime=0;chorus.play().catch(()=>{});};
+$('unlockBtn').onclick=()=>{
+  [intro,chorus].forEach(a=>{a.muted=true;a.play().then(()=>{a.pause();a.currentTime=0;a.muted=false;}).catch(()=>{a.muted=false;});});
+  $('unlock').hidden=true;
+};
+addEventListener('keydown',e=>{
+  if(!S||e.repeat)return;
+  const k=e.key.toLowerCase();
+  if(e.key===' '){e.preventDefault();if(S.phase==='ready')post('start');else if(S.phase==='answer')post('next');}
+  else if(k==='o'&&S.phase==='buzzed')post('correct');
+  else if(k==='x'&&S.phase==='buzzed')post('wrong');
+});
+init();
+</script>
+</body>
+</html>

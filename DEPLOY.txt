@@ -1,0 +1,13 @@
+公開サーバーに置く手順（GitHub + Render、無料）
+
+1. GitHub (github.com) の無料アカウントを作る
+2. 右上「+」→ New repository → 名前 intro-quiz、Public → Create repository
+3. 「uploading an existing file」を押し、このフォルダの中身（フォルダは無く、ファイルだけです）をすべて選んでドラッグして Commit changes
+4. Render (render.com) に GitHub アカウントでサインアップ
+5. + New → Web Service → intro-quiz のリポジトリを選ぶ
+   Language: Python 3 / Build Command: echo build / Start Command: python quiz_server.py
+   Instance Type: Free
+   Environment Variables に  HOST_KEY = 好きな合言葉（出題者だけが知る）を追加 → Deploy
+6. 出た https://〜.onrender.com を参加者に共有。出題者は /host を開き、合言葉を入力
+
+注意: 無料枠は15分操作がないと止まり、次のアクセスで再起動します（1分前後）。本番の少し前に一度開いておく。
