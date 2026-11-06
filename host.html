@@ -38,9 +38,24 @@ main{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;align-
 .bar{width:min(520px,70vw);height:6px;border-radius:3px;background:#ffffff1c;overflow:hidden}
 .bar i{display:block;height:100%;width:0;background:var(--accent)}
 /* 回答中ステージ */
-.hero{position:relative;width:min(46vh,420px);aspect-ratio:1;border-radius:34px;overflow:hidden;box-shadow:0 0 0 6px var(--accent),0 20px 60px #000a;animation:pop .35s cubic-bezier(.2,1.4,.4,1)}
+.hero{position:relative;width:min(40vh,380px);aspect-ratio:1;border-radius:34px;overflow:hidden;box-shadow:0 0 0 6px var(--accent),0 20px 60px #000a;animation:pop .35s cubic-bezier(.2,1.4,.4,1)}
 .hero img{width:100%;height:100%;display:block}
 @keyframes pop{from{transform:scale(.5);opacity:0}to{transform:none;opacity:1}}
+.songlist{max-height:260px;overflow:auto;border:2px solid #ffffff26;border-radius:12px;background:#0006}
+.f .songlist label{margin:0;font-size:17px;display:flex;gap:12px;align-items:center;padding:10px 12px;border-bottom:1px solid #ffffff14;cursor:pointer;font-size:17px}
+.songlist label:last-child{border-bottom:0}
+.songlist input{width:22px;height:22px;flex:none}
+.songlist small{color:var(--mute);margin-left:auto}
+.mini{display:flex;gap:8px;margin-top:8px;align-items:center;color:var(--mute);font-size:14px}
+.mini button{background:#ffffff14;border-radius:8px;padding:6px 12px;font-size:13px}
+.rankrow{display:flex;align-items:center;gap:26px}
+.tm{display:flex;align-items:baseline;gap:4px;font-size:34px;font-weight:700;color:var(--accent);min-width:110px}
+.tm b{font-size:54px;font-variant-numeric:tabular-nums;line-height:1}.tm span{font-size:20px;color:var(--mute);font-weight:400}
+.tm.low{color:var(--ng)}.tm.low b{animation:blink .6s infinite alternate}
+.tbar{width:min(40vh,380px,80vw);height:10px;border-radius:99px;background:#ffffff1f;overflow:hidden}
+.tbar i{display:block;height:100%;width:100%;background:var(--accent);transition:width .1s linear}
+.tbar.low i{background:var(--ng)}
+@keyframes blink{from{opacity:1}to{opacity:.45}}
 .rank{font-size:34px;font-weight:700;letter-spacing:.06em}
 .rank small{font-size:20px;color:var(--mute);font-weight:400;margin-left:10px}
 .strip{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
@@ -127,6 +142,11 @@ h2.fin{margin:0;font-size:clamp(32px,5vw,56px);letter-spacing:.08em}
     <div class="f"><label>チーム数</label><div class="seg" id="segN"></div></div>
     <div class="f"><label>1チームの参加台数<small>スマホが何台まで入れるか</small></label>
       <div class="step"><button type="button" id="capM">−</button><b id="capV">1</b><button type="button" id="capP">＋</button><span>台まで</span></div></div>
+    <div class="f"><label>使う曲<small>チェックした曲だけが出題されます</small></label>
+      <div class="songlist" id="songList"><div style="padding:14px;color:var(--mute)">曲を読み込み中…</div></div>
+      <div class="mini"><button type="button" id="selAll">全部選ぶ</button><button type="button" id="selNone">全部外す</button><span id="selCount"></span></div></div>
+    <div class="f"><label>回答の制限時間<small>回答権のあるチームの持ち時間</small></label>
+      <div class="step"><button type="button" id="tmM">−</button><b id="tmV">7</b><button type="button" id="tmP">＋</button><span>秒</span></div></div>
     <div class="f"><label class="chk"><input type="checkbox" id="nShuf" checked>曲をランダムな順番で出す</label></div>
     <div class="f" id="keyRow" hidden><label>部屋作成の合言葉<small>公開サーバーの管理用（HOST_KEYに設定したもの）</small></label><input type="password" id="nKey"></div>
     <div class="err" id="eNew"></div>
@@ -159,7 +179,7 @@ h2.fin{margin:0;font-size:clamp(32px,5vw,56px);letter-spacing:.08em}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ls={get(k){try{return localStorage.getItem(k)||''}catch(e){return ''}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
-let cfg,songs=[],R=null,S=null,es=null,teamBy={},teams=[],intro=new Audio(),chorus=new Audio(),prev={},capV=1,nSel=8,presUrl='';
+let cfg,songs=[],R=null,S=null,es=null,teamBy={},teams=[],intro=new Audio(),chorus=new Audio(),prev={},capV=1,nSel=8,presUrl='',tmV=7,tEnd=0,allSongs=[];
 const REASON={key:'部屋作成の合言葉が違います',room_len:'参加者用パスワードは3〜32文字にしてください',host_len:'出題者用パスワードは3〜32文字にしてください',same:'参加者用と出題者用は別のパスワードにしてください',exists:'そのパスワードの部屋は既にあります。別のパスワードにしてください',full:'部屋が多すぎます。しばらくしてからにしてください',nosongs:'曲が登録されていません',wait:'失敗が続いたため、少し待ってからやりなおしてください',bad:'入力を確認してください'};
 const tileHTML=(t,cls='',inner='')=>`<div class="tile ${cls}"><img src="${t.icon}" alt="${t.name}">${inner}</div>`;
 
@@ -168,10 +188,27 @@ function drawSeg(){$('segN').innerHTML=[2,3,4,5,6,7,8].map(n=>`<button type="but
 $('segN').onclick=e=>{const b=e.target.closest('button');if(b){nSel=+b.dataset.n;drawSeg();}};
 $('capM').onclick=()=>{capV=Math.max(1,capV-1);$('capV').textContent=capV;};
 $('capP').onclick=()=>{capV=Math.min(30,capV+1);$('capV').textContent=capV;};
+$('tmM').onclick=()=>{tmV=Math.max(1,tmV-1);$('tmV').textContent=tmV;};
+$('tmP').onclick=()=>{tmV=Math.min(60,tmV+1);$('tmV').textContent=tmV;};
+async function loadSongList(){
+  const key=cfg.needKey?$('nKey').value:'';
+  let d={ok:false};
+  try{d=await (await fetch('/api/songs?admin=1&key='+encodeURIComponent(key))).json();}catch(e){}
+  if(!d.ok){allSongs=[];$('songList').innerHTML='<div style="padding:14px;color:var(--mute)">'+(cfg.needKey?'「部屋作成の合言葉」を入れると、曲の一覧が出ます':'曲を読み込めませんでした')+'</div>';countSel();return;}
+  allSongs=d.songs;
+  $('songList').innerHTML=allSongs.map((x,i)=>`<label><input type="checkbox" data-i="${i}" checked><span>${esc(x.title)}</span><small>${esc(x.artist)}</small></label>`).join('');
+  countSel();
+}
+function countSel(){const n=document.querySelectorAll('#songList input:checked').length;$('selCount').textContent=allSongs.length?`選んだ曲：${n} / ${allSongs.length} 曲`:'';}
+$('songList').addEventListener('change',countSel);
+$('selAll').onclick=()=>{document.querySelectorAll('#songList input').forEach(c=>c.checked=true);countSel();};
+$('selNone').onclick=()=>{document.querySelectorAll('#songList input').forEach(c=>c.checked=false);countSel();};
 async function jpost(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return r.json().catch(()=>({ok:false}));}
 $('fNew').onsubmit=async e=>{
   e.preventDefault();$('eNew').textContent='';
-  const res=await jpost('/api/create',{n:nSel,cap:capV,shuffle:$('nShuf').checked,key:$('nKey').value});
+  const sel=[...document.querySelectorAll('#songList input:checked')].map(c=>+c.dataset.i);
+  if(allSongs.length&&!sel.length){$('eNew').textContent='使う曲を1曲以上選んでください';return;}
+  const res=await jpost('/api/create',{n:nSel,cap:capV,timer:tmV,shuffle:$('nShuf').checked,key:$('nKey').value,...(allSongs.length?{songs:sel}:{})});
   if(!res.ok){$('eNew').textContent=REASON[res.reason]||'作成できませんでした';return;}
   enter(res.room,res.hostpw);
 };
@@ -204,8 +241,8 @@ async function init(){
   cfg=await (await fetch('/api/config')).json();
   cfg.teams.forEach(t=>teamBy[t.id]=t);
   $('keyRow').hidden=!cfg.needKey; $('nKey').value=ls.get('createKey');
-  $('nKey').onchange=()=>ls.set('createKey',$('nKey').value);
-  drawSeg();
+  $('nKey').onchange=()=>{ls.set('createKey',$('nKey').value);loadSongList();};
+  drawSeg();loadSongList();
   const saved=ls.get('quizHost');
   if(saved){try{const s=JSON.parse(saved);const res=await jpost('/api/host_login',s);if(res.ok){enter(s.room,s.hostpw);return;}}catch(e){} ls.del('quizHost');}
 }
@@ -229,7 +266,14 @@ chorus.onended=()=>{
   const pos=S&&S.pos;clearTimeout(nextTimer);
   nextTimer=setTimeout(()=>{if(S&&R&&S.phase==='answer'&&S.pos===pos)post('next',{from:pos});},1800);
 };
-function onState(){audioSync();render();}
+function onState(){audioSync();tEnd=S.tl!==undefined?Date.now()+S.tl:0;render();tick();}
+function tick(){
+  const n=$('tmN');if(!n||!S||S.tl===undefined)return;
+  const left=Math.max(0,tEnd-Date.now()),sec=Math.ceil(left/1000),low=left<=3000;
+  n.textContent=sec;$('tm').classList.toggle('low',low);$('tbar').classList.toggle('low',low);
+  $('tbI').style.width=(left/(S.timer*1000)*100)+'%';
+}
+setInterval(tick,100);
 
 /* ---------- 表示 ---------- */
 function render(){
@@ -256,7 +300,7 @@ function render(){
     }).join('')+'</div>';
     if(cur<order.length){
       const o=order[cur],d=cur>0?`<small>最速より +${((o.ms-order[0].ms)/1000).toFixed(2)}秒</small>`:'';
-      st.innerHTML=`<div class="hero"><img src="${teamBy[o.team].icon}" alt=""></div><div class="rank">${cur+1}位${d}</div>`+strip;
+      st.innerHTML=`<div class="hero"><img src="${teamBy[o.team].icon}" alt=""></div><div class="rankrow"><div class="rank">${cur+1}位${d}</div><div class="tm" id="tm"><b id="tmN"></b><span>秒</span></div></div><div class="tbar" id="tbar"><i id="tbI"></i></div>`+strip;
     }else st.innerHTML=`<div class="allwrong">全チーム不正解…</div>`+strip;
   }else if(ph==='answer'){
     const w=S.winner?teamBy[S.winner]:null;

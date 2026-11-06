@@ -46,7 +46,7 @@ h3{font-size:14px;color:var(--mute);font-weight:400;margin:20px 0 8px;letter-spa
 </head>
 <body>
 <div class="wrap">
-  <div class="bar"><b id="q">第1問</b><span class="chip" id="chip">…</span><span class="sub" id="room"></span></div>
+  <div class="bar"><b id="q">第1問</b><span class="chip" id="chip">…</span><span class="sub" id="room"></span><span class="chip" id="ptm" hidden></span></div>
   <div class="warn">この画面は出題者用です。会場のスクリーンには映さないでください（スクリーンには、出題者画面の別ウィンドウを映します）。</div>
   <div id="msg" class="empty"></div>
   <div class="card"><img id="cover" alt=""><div><div class="lab">この問題の答え</div><div class="t" id="title">—</div><div class="a" id="artist"></div></div></div>
@@ -75,7 +75,9 @@ h3{font-size:14px;color:var(--mute);font-weight:400;margin:20px 0 8px;letter-spa
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ls=k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}};
-let R=null,songs=[],teamBy={},S=null;
+let R=null,songs=[],teamBy={},S=null,tEnd=0;
+function tickP(){const e=$('ptm');if(!S||S.tl===undefined){e.hidden=true;return;}e.hidden=false;const l=Math.max(0,tEnd-Date.now());e.textContent='⏱ 残り '+Math.ceil(l/1000)+'秒';e.style.background=l<=3000?'#ff5d6c':'#ffffff18';}
+setInterval(tickP,200);
 const p=new URLSearchParams(location.search);
 if(p.get('r')&&p.get('k'))R={room:p.get('r'),hostpw:p.get('k')};
 else{try{R=JSON.parse(ls('quizHost'))}catch(e){}}
@@ -103,6 +105,7 @@ function render(){
   $('order').innerHTML=o.length?o.map((x,i)=>{const t=teamBy[x.team],w=S.wrong.includes(x.team),cur=ph==='buzzed'&&i===S.cur;
     return `<div class="o ${cur?'cur':''} ${w?'wrong':''}"><div class="n">${i+1}</div><img src="${t.icon}" alt=""><div class="nm">${t.name}${cur?'　← 回答中':''}${w?'　×':''}</div><div class="ms">${i?'+'+((x.ms-o[0].ms)/1000).toFixed(2)+'秒':'最速'}</div></div>`;}).join('')
     :'<div class="empty">まだ誰も押していません</div>';
+  tEnd=S.tl!==undefined?Date.now()+S.tl:0;tickP();
   const nx=S.next!==undefined?songs[S.next]:null;
   $('nextq').innerHTML=nx?`<b>${esc(nx.title)}</b>　<span class="sub">${esc(nx.artist)}</span>`:'<span class="sub">これが最後の問題です</span>';
   const show={bStart:ph==='ready',bOk:ph==='buzzed'&&S.cur<o.length,bNg:ph==='buzzed'&&S.cur<o.length,

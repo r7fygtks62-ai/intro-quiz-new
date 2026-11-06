@@ -62,8 +62,9 @@ def norm(s):
     return unicodedata.normalize("NFKC", str(s or "")).strip().casefold()
 
 class Room:
-    def __init__(self, pw, hostpw, n, cap, shuffle):
+    def __init__(self, pw, hostpw, n, cap, shuffle, sel, timer):
         self.pw, self.hostpw = pw, hostpw
+        self.sel, self.timer, self.t_ans = sel, timer, 0.0
         self.n, self.cap, self.shuffle = n, cap, shuffle
         self.teams = ALL_IDS[:n]
         self.presence = {}     # 端末ID -> {"team","t"}
@@ -72,7 +73,7 @@ class Room:
         self.new_game()
 
     def new_game(self):
-        idx = list(range(len(SONGS)))
+        idx = list(self.sel)
         if self.shuffle: random.shuffle(idx)
         self.songs = idx
         self.rounds = {}                       # 何問目 -> {"events":[{team,type,d}], "done":bool}
@@ -110,7 +111,9 @@ class Room:
         s = {"rev": self.rev, "run": self.run, "phase": self.phase, "order": self.order, "cur": self.cur,
              "judged": self.judged, "wrong": self.wrong, "winner": self.winner, "pos": self.pos,
              "total": len(self.songs), "teams": self.teams, "cap": self.cap, "joined": counts,
-             "delay": int(START_DELAY * 1000)}
+             "delay": int(START_DELAY * 1000), "timer": self.timer}
+        if self.phase == "buzzed" and self.cur < len(self.order):
+            s["tl"] = max(0, int((self.timer - (time.monotonic() - self.t_ans)) * 1000))
         if host and self.pos < len(self.songs): s["song"] = self.songs[self.pos]
         if host and self.pos + 1 < len(self.songs): s["next"] = self.songs[self.pos + 1]
         return s
@@ -148,8 +151,12 @@ def create_room(b):
     if not SONGS: return {"ok": False, "reason": "nosongs"}
     try:
         n = max(2, min(8, int(b.get("n", 8)))); cap = max(1, min(30, int(b.get("cap", 1))))
+        timer = max(1, min(60, int(b.get("timer", 7))))
+        sel = b.get("songs")
+        sel = list(range(len(SONGS))) if sel is None else sorted({int(i) for i in sel if 0 <= int(i) < len(SONGS)})
     except Exception:
         return {"ok": False, "reason": "bad"}
+    if not sel: return {"ok": False, "reason": "nosongs"}
     with lock:
         if len(rooms) >= MAX_ROOMS: return {"ok": False, "reason": "full"}
         for _ in range(200):
@@ -158,7 +165,7 @@ def create_room(b):
         else:
             return {"ok": False, "reason": "full"}
         hp = secrets.token_urlsafe(12)
-        rooms[pw] = Room(pw, hp, n, cap, bool(b.get("shuffle", True)))
+        rooms[pw] = Room(pw, hp, n, cap, bool(b.get("shuffle", True)), sel, timer)
     return {"ok": True, "room": pw, "hostpw": hp}
 
 def host_action(r, b):
@@ -172,7 +179,7 @@ def host_action(r, b):
         elif a == "wrong" and ph == "buzzed" and r.cur < len(r.order) and rd:
             t = r.order[r.cur]["team"]
             rd["events"].append({"team": t, "type": "wrong", "d": -PENALTY})
-            r.wrong.append(t); r.judged = True; r.cur += 1
+            r.wrong.append(t); r.judged = True; r.cur += 1; r.t_ans = time.monotonic()
         elif a == "correct" and ph == "buzzed" and r.cur < len(r.order) and rd:
             r.winner = r.order[r.cur]["team"]
             rd["events"].append({"team": r.winner, "type": "correct", "d": 1}); rd["done"] = True; r.phase = "answer"
@@ -224,6 +231,7 @@ def buzz(r, team):
         elif not (r.phase == "buzzed" and not r.judged): return {"ok": False, "reason": "closed"}
         if any(o["team"] == team for o in r.order): return {"ok": True, "dup": True}
         if not r.order: r.t0 = now
+        if not r.order: r.t_ans = now
         r.order.append({"team": team, "ms": int((now - r.t0) * 1000)})
         r.broadcast()
         return {"ok": True, "rank": len(r.order)}

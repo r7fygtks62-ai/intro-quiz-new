@@ -71,6 +71,9 @@ p.sub{text-align:center;color:var(--mute);margin:0 0 20px}
 </section>
 <script>
 const $=id=>document.getElementById(id);
+let tEnd=0;
+function tickT(){const n=$('tmN');if(!n||!S||S.tl===undefined)return;const l=Math.max(0,tEnd-Date.now());n.textContent=Math.ceil(l/1000);n.style.color=l<=3000?'#ff5d6c':'';}
+setInterval(tickT,100);
 let cfg,S=null,me=null,room='',es=null,pressed=false,lastRun=-1,mode='entry',openAt=0,openT=null;
 const myId=Math.random().toString(36).slice(2)+Date.now().toString(36);
 function store(k,v){try{if(v===undefined)return localStorage.getItem(k);if(v===null)localStorage.removeItem(k);else localStorage.setItem(k,v);}catch(e){return null}}
@@ -122,7 +125,7 @@ function openEvents(){
   es.onmessage=e=>{
     const d=JSON.parse(e.data);
     if(d.closed)return backToEntry('この部屋は終了しました');
-    const first=!S;S=d;
+    const first=!S;S=d;tEnd=d.tl!==undefined?Date.now()+d.tl:0;
     if(first){const sv=store('team:'+room);if(sv&&S.teams.includes(sv)){choose(sv);return;}}
     if(mode==='pick')renderPick();
     if(mode==='play')render();
@@ -170,7 +173,8 @@ function render(){
   else if(S.phase==='buzzed'){
     if(idx>=0){
       btn.disabled=true;btn.className='me';
-      btn.innerHTML=wrong?`×<small>不正解</small>`:`${idx+1}位<small>${iAmCur?'回答どうぞ！':'押しました'}</small>`;
+      btn.innerHTML=wrong?`×<small>不正解</small>`:(iAmCur?`<span id="tmN" style="font-size:1.5em;line-height:1"></span><small>${idx+1}位　回答どうぞ！</small>`:`${idx+1}位<small>押しました</small>`);
+      tickT();
       if(iAmCur){note.textContent='あなたのチームが回答中！';note.classList.add('hot');}
       else if(wrong)note.textContent='次のチームの回答です';
       else{const w=S.order[S.cur];note.textContent=w?'回答中: '+teamBy(w.team).name:'';}
