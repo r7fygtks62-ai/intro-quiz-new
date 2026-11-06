@@ -54,7 +54,7 @@ ALL_IDS = [t["id"] for t in TEAMS]
 
 lock = threading.RLock()
 rooms = {}            # 部屋番号 -> Room
-START_DELAY = 1.2     # 「デデン」の間、押せない秒数
+START_DELAY = 0.0     # スタート直後に押せない秒数（0なら即座に押せる）
 PENALTY = 0.5         # お手付き（不正解）の減点
 fails = {}            # IP -> [失敗した時刻...]
 
@@ -112,6 +112,7 @@ class Room:
              "total": len(self.songs), "teams": self.teams, "cap": self.cap, "joined": counts,
              "delay": int(START_DELAY * 1000)}
         if host and self.pos < len(self.songs): s["song"] = self.songs[self.pos]
+        if host and self.pos + 1 < len(self.songs): s["next"] = self.songs[self.pos + 1]
         return s
 
     def broadcast(self):

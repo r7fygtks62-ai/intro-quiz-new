@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>イントロクイズ 発表者画面</title>
+<style>
+:root{--bg:#0d1130;--bg2:#161c47;--ink:#fdfde8;--mute:#8d93c4;--accent:#ffd23f;--ok:#2fd27a;--ng:#ff5d6c;
+  --display:"Hiragino Maru Gothic ProN","Yu Gothic UI","Meiryo","Noto Sans JP",system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--display);padding:14px max(14px,3vw) 40px}
+button{font:inherit;color:inherit;border:0;cursor:pointer}
+a{color:var(--accent)}
+.wrap{max-width:820px;margin:0 auto}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.chip{padding:6px 14px;border-radius:999px;background:#ffffff18;font-size:15px}
+.chip.live{background:var(--accent);color:#1b1b2e;font-weight:700}.chip.stop{background:var(--ng);font-weight:700}.chip.ans{background:var(--ok);color:#06251a;font-weight:700}
+.sub{color:var(--mute);font-size:13px}
+.warn{background:#ff5d6c22;border:1px solid #ff5d6c66;border-radius:10px;padding:8px 12px;font-size:13px;margin:10px 0 14px}
+.card{display:flex;gap:18px;align-items:center;background:var(--bg2);border-radius:20px;padding:14px}
+.card img{width:min(34vw,180px);aspect-ratio:1;border-radius:12px;object-fit:cover;background:#000}
+.card .t{font-size:clamp(26px,6vw,44px);font-weight:700;line-height:1.15}
+.card .a{font-size:clamp(16px,3.4vw,24px);color:var(--mute);margin-top:6px}
+.card .lab{font-size:12px;color:var(--accent);letter-spacing:.1em;margin-bottom:4px}
+h3{font-size:14px;color:var(--mute);font-weight:400;margin:20px 0 8px;letter-spacing:.06em}
+.order{display:flex;flex-direction:column;gap:6px}
+.o{display:flex;align-items:center;gap:12px;background:#ffffff10;border-radius:14px;padding:6px 12px 6px 6px}
+.o img{width:44px;height:44px;border-radius:10px}
+.o .n{width:30px;text-align:center;color:var(--mute);font-weight:700}
+.o .nm{flex:1}.o .ms{color:var(--mute);font-size:13px}
+.o.cur{background:var(--accent);color:#1b1b2e}.o.cur .n,.o.cur .ms{color:#1b1b2e}
+.o.wrong{opacity:.5}.o.wrong .nm{text-decoration:line-through}
+.empty{color:var(--mute);font-size:14px;padding:8px 2px}
+.ctl{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.btn{padding:16px 22px;border-radius:14px;font-size:19px;font-weight:700;background:#ffffff1a;flex:1 1 140px}
+.btn.main{background:var(--accent);color:#1b1b2e}.btn.ok{background:var(--ok);color:#06251a}.btn.ng{background:var(--ng);color:#fff}
+.btn:active{transform:scale(.97)}
+[hidden]{display:none!important}
+.nextq{background:#ffffff0c;border-radius:14px;padding:10px 14px;font-size:15px}
+.nextq b{font-size:18px}
+.score{display:flex;gap:8px;flex-wrap:wrap}
+.score .s{display:flex;align-items:center;gap:6px;background:#ffffff10;border-radius:12px;padding:4px 10px 4px 4px;font-size:15px}
+.score .s img{width:30px;height:30px;border-radius:8px}
+.foot{margin-top:22px;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar"><b id="q">第1問</b><span class="chip" id="chip">…</span><span class="sub" id="room"></span></div>
+  <div class="warn">この画面は出題者用です。会場のスクリーンには映さないでください（スクリーンには、出題者画面の別ウィンドウを映します）。</div>
+  <div id="msg" class="empty"></div>
+  <div class="card"><img id="cover" alt=""><div><div class="lab">この問題の答え</div><div class="t" id="title">—</div><div class="a" id="artist"></div></div></div>
+
+  <div class="ctl" id="ctl">
+    <button class="btn main" id="bStart">▶ スタート</button>
+    <button class="btn ok" id="bOk" hidden>正解 ○</button>
+    <button class="btn ng" id="bNg" hidden>不正解 ×</button>
+    <button class="btn" id="bReveal" hidden>答えを見せる（正解なし）</button>
+    <button class="btn main" id="bNext" hidden>次の曲 ▶▶</button>
+    <button class="btn" id="bSkip">この曲を飛ばす</button>
+    <button class="btn" id="bReset" hidden>やりなおし</button>
+  </div>
+
+  <h3>早押しの順番</h3>
+  <div class="order" id="order"></div>
+
+  <h3>次の曲</h3>
+  <div class="nextq" id="nextq">—</div>
+
+  <h3>得点</h3>
+  <div class="score" id="score"></div>
+  <p class="foot"><a href="#" id="resLink" target="_blank">結果ページを開く（修正・CSV保存）</a></p>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ls=k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}};
+let R=null,songs=[],teamBy={},S=null;
+const p=new URLSearchParams(location.search);
+if(p.get('r')&&p.get('k'))R={room:p.get('r'),hostpw:p.get('k')};
+else{try{R=JSON.parse(ls('quizHost'))}catch(e){}}
+const post=(a,x={})=>fetch('/api/host',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({room:R.room,hostpw:R.hostpw,action:a,...x})});
+async function init(){
+  if(!R){$('msg').textContent='部屋の情報がありません。出題者の画面の「発表者画面」ボタンから開いてください。';return;}
+  (await (await fetch('/api/config')).json()).teams.forEach(t=>teamBy[t.id]=t);
+  const sr=await (await fetch(`/api/songs?room=${encodeURIComponent(R.room)}&hostpw=${encodeURIComponent(R.hostpw)}`)).json();
+  if(!sr.ok){$('msg').textContent='この部屋は見つかりません（終了したか、サーバーが再起動しました）。';return;}
+  songs=sr.songs;
+  $('room').textContent='部屋番号 '+R.room;
+  $('resLink').href=`results.html?r=${encodeURIComponent(R.room)}&k=${encodeURIComponent(R.hostpw)}`;
+  const es=new EventSource(`/api/events?room=${encodeURIComponent(R.room)}&hostpw=${encodeURIComponent(R.hostpw)}`);
+  es.onmessage=e=>{const d=JSON.parse(e.data);if(d.closed){$('msg').textContent='部屋が閉じられました。';es.close();return;}S=d;render();};
+  loadScore();setInterval(loadScore,4000);
+}
+function render(){
+  const sg=songs[S.song],ph=S.phase;
+  $('q').textContent=ph==='finished'?'全問終了':`第${S.pos+1}問 / ${S.total}`;
+  const c=$('chip');c.className='chip';c.textContent={ready:'待機中',playing:'♪ 再生中',buzzed:'早押し！',answer:'正解発表',finished:'終了'}[ph];
+  if(ph==='playing')c.classList.add('live');if(ph==='buzzed')c.classList.add('stop');if(ph==='answer'||ph==='finished')c.classList.add('ans');
+  if(sg&&ph!=='finished'){$('title').textContent=sg.title;$('artist').textContent=sg.artist;$('cover').src=sg.cover;$('cover').style.visibility='visible';}
+  else{$('title').textContent='—';$('artist').textContent='';$('cover').style.visibility='hidden';}
+  const o=S.order;
+  $('order').innerHTML=o.length?o.map((x,i)=>{const t=teamBy[x.team],w=S.wrong.includes(x.team),cur=ph==='buzzed'&&i===S.cur;
+    return `<div class="o ${cur?'cur':''} ${w?'wrong':''}"><div class="n">${i+1}</div><img src="${t.icon}" alt=""><div class="nm">${t.name}${cur?'　← 回答中':''}${w?'　×':''}</div><div class="ms">${i?'+'+((x.ms-o[0].ms)/1000).toFixed(2)+'秒':'最速'}</div></div>`;}).join('')
+    :'<div class="empty">まだ誰も押していません</div>';
+  const nx=S.next!==undefined?songs[S.next]:null;
+  $('nextq').innerHTML=nx?`<b>${esc(nx.title)}</b>　<span class="sub">${esc(nx.artist)}</span>`:'<span class="sub">これが最後の問題です</span>';
+  const show={bStart:ph==='ready',bOk:ph==='buzzed'&&S.cur<o.length,bNg:ph==='buzzed'&&S.cur<o.length,
+    bReveal:ph==='playing'||(ph==='buzzed'&&S.cur>=o.length),bNext:ph==='answer',bSkip:ph==='ready'&&S.total>1,bReset:ph==='playing'||ph==='buzzed'||ph==='answer'};
+  for(const k in show)$(k).hidden=!show[k];
+}
+async function loadScore(){
+  if(!R)return;
+  try{const d=await (await fetch(`/api/results?room=${encodeURIComponent(R.room)}&hostpw=${encodeURIComponent(R.hostpw)}`)).json();
+    if(!d.ok)return;
+    $('score').innerHTML=d.teams.map(id=>`<div class="s"><img src="${teamBy[id].icon}" alt="">${(Math.round(d.scores[id]*10)/10).toString().replace(/^-/,'−')}点</div>`).join('');}catch(e){}
+}
+$('bStart').onclick=()=>post('start');$('bOk').onclick=()=>post('correct');$('bNg').onclick=()=>post('wrong');
+$('bReveal').onclick=()=>post('reveal');$('bNext').onclick=()=>post('next');$('bSkip').onclick=()=>post('next');$('bReset').onclick=()=>post('reset');
+init();
+</script>
+</body>
+</html>
